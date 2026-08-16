@@ -1,0 +1,16 @@
+slug: zhongyou
+packages:
+- com.hexin.plat.android.ZhongyouSecurity
+verified_versions:
+- version: 9.07.04
+  verified_at: '2026-08-16'
+compatibility:
+  min: 9.07.04
+  max_exclusive: 999.999.999
+test_accounts: []
+environment: env.yaml
+profile: profile.yaml
+prerequisites: prerequisites.yaml
+aliases:
+- 中邮证券
+- 中邮

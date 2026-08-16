@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["slug", "packages", "verified_versions", "compatibility", "test_accounts"],
+  "properties": {
+    "slug": {"type": "string"},
+    "aliases": {"type": "array", "items": {"type": "string"}},
+    "packages": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "verified_versions": {"type": "array", "items": {"type": "object", "required": ["version", "verified_at"]}},
+    "compatibility": {"type": "object", "required": ["min", "max_exclusive"]},
+    "test_accounts": {"type": "array", "items": {"type": "object", "required": ["alias", "type", "mask"]}},
+    "environment": {"type": "string"},
+    "profile": {"type": "string"},
+    "prerequisites": {"type": "string"}
+  }
+}

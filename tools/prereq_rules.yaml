@@ -1,0 +1,76 @@
+version: 1
+rules:
+  - id: basic-bjse-etf
+    applies_to: {app: "*", market: "北交所"}
+    match: {all: ["买入"], any: [], none: ["融资", "融券", "还款", "还券", "大宗"]}
+    requires: {instrument: {market: "北交所", product: "ETF"}, account: "any"}
+    polarity: no_prereq
+    priority: 1
+    confidence: high
+    provenance: "国金728实测:需求清单#1"
+  - id: sell-needs-holding
+    applies_to: {app: "*", market: "北交所"}
+    match: {all: ["卖出"], any: [], none: ["融券", "还款", "大宗"]}
+    requires: {instrument: {market: "北交所", product: "ETF", has_holding: true}, account: "any"}
+    polarity: positive
+    priority: 5
+    confidence: high
+    provenance: "国金728实测:需求清单#3(950015持仓1300)"
+  - id: market-order-needs-depth
+    applies_to: {app: "*", market: "北交所"}
+    match: {all: ["市价"], any: [], none: []}
+    requires: {instrument: {market: "北交所", product: "ETF", orderbook_depth: true}, account: "any"}
+    polarity: positive
+    priority: 6
+    confidence: high
+    provenance: "国金728实测:需求清单#4([63600]无盘口深度驳回)"
+  - id: iopv-needs-nav
+    applies_to: {app: "*", market: "北交所"}
+    match: {all: ["IOPV"], any: [], none: []}
+    requires: {instrument: {market: "北交所", product: "ETF", has_nav: true}, account: "any"}
+    polarity: positive
+    priority: 6
+    confidence: high
+    provenance: "国金728实测:需求清单#2(950001有净值,950025无)"
+  - id: rz-collateral
+    applies_to: {app: "*", market: "北交所"}
+    match: {all: ["担保品"], any: ["买入", "卖出"], none: []}
+    requires: {instrument: {market: "北交所", product: "ETF", collateral_eligible: true}, account: "信用"}
+    polarity: positive
+    priority: 8
+    confidence: high
+    provenance: "国金728实测:需求清单#5a(950025担保品)"
+  - id: rz-buy-eligible
+    applies_to: {app: "*", market: "北交所"}
+    match: {all: ["融资买入"], any: [], none: ["非融资"]}
+    requires: {instrument: {market: "北交所", product: "ETF", financing_eligible: true}, account: "信用"}
+    polarity: positive
+    priority: 10
+    confidence: high
+    provenance: "国金728实测:需求清单#5b(融资标的池)"
+  - id: rz-buy-negative-instrument
+    applies_to: {app: "*", market: "北交所"}
+    match: {all: ["非融资标的"], any: ["不可融资", "融资买入"], none: []}
+    requires: {instrument: {market: "北交所", product: "ETF", financing_eligible: false}}
+    expected_capability: {financing_buy: "rejected"}
+    polarity: negative_property
+    priority: 12
+    confidence: medium
+    provenance: "国金728实测:需求清单#5b负向"
+  - id: subscription-field
+    applies_to: {app: "*", market: "北交所"}
+    match: {all: ["认购"], any: ["认购状态", "认购起止"], none: []}
+    requires: {instrument: {market: "北交所", product: "ETF", in_subscription: true}, account: "any"}
+    polarity: positive
+    priority: 7
+    confidence: medium
+    provenance: "国金728实测:需求清单#6"
+  - id: no-permission-fail
+    applies_to: {app: "*", market: "北交所"}
+    match: {all: ["无权限"], any: [], none: []}
+    requires: {account: "普通"}
+    expected_capability: {委托: "rejected"}
+    polarity: negative_property
+    priority: 9
+    confidence: medium
+    provenance: "国金728实测:需求清单#7(全权限账户触发不了)"

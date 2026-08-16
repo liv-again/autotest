@@ -1,0 +1,8 @@
+# ★此 fixture 刻意保留"完整账号入受控文件即被拒"以持续守护 P0 脱敏（不得削弱）；profile_invalid 已覆盖"缺 required 字段"路径。
+slug: guojin
+account_capabilities:
+  - {alias: pt, type: 普通, capabilities: ["北交所交易"], mask: "***5183", account_no: "0000000000"}   # ★被禁字段：裸 account_no（假号占位）→ additionalProperties:false 拒绝；测的是"存在完整账号字段即拒"，值无关
+instrument_properties:
+  - {code: "950025", name: "北证50ETF测试39", props: ["t0"]}
+known_codes:
+  - {code: "950025", name: "北证50ETF测试39", market: 北交所, attributes: {t0: true}}

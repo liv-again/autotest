@@ -1,0 +1,15 @@
+rules_version: 1
+generated_from: {rules_sha256: "abc123", cases_count: 1}
+cases:
+  - tc_id: "TC-001"
+    title: "北交所ETF 限价买入"
+    matched_rule_ids: ["basic-bjse-etf"]
+    status: "identified"
+    required_instruments: [{market: "北交所", product: "ETF"}]
+    required_account: "any"
+    polarity: "no_prereq"
+    needed_codes: []
+    provenance: ["国金728实测"]
+unidentified: []
+conflicts: []
+summary: {identified: 1, unidentified: 0, conflict: 0, missing_codes: []}

@@ -1,0 +1,61 @@
+# 新三板交易 · 限价卖出 → 撤单（国金证券）
+# 前置：已登录 / 交易时段 / SELL_CODE 必须是【账户有持仓】的北交所ETF(默认950015)
+# 策略：委托价=涨停价 → 挂已报不成交 → 撤单 → 持仓不减、零残留
+appId: com.hexin.plat.android.GuoJinZXGSecurity
+env:
+  SELL_CODE: "950015"
+  QTY: "100"
+---
+- launchApp
+# ---- 交易 → 新三板交易 → 卖出 ----
+- tapOn: "交易"
+- tapOn:
+    id: "tv_menu_text"
+    text: "新三板交易"
+- tapOn:
+    id: "tv_gz_type"
+    text: "卖出"
+- assertVisible:
+    id: "tv_auto_stock_code"
+# ---- 输入代码 → 回填（新三板卖出：输码后点键盘「确定」键确认）----
+- tapOn:
+    id: "tv_auto_stock_code"
+- inputText: "${SELL_CODE}"
+# 优先点下拉建议；本页有时需点自定义键盘右下「确定」键才回填
+- runFlow:
+    when:
+      visible:
+        id: "stock_code_tv"
+    commands:
+      - tapOn:
+          id: "stock_code_tv"
+- assertVisible:
+    id: "tv_stock_name"
+# ---- 委托价 = 涨停价 ----
+- copyTextFrom:
+    id: "tv_up_limit_price"
+- tapOn:
+    id: "et_stock_price"
+- eraseText
+- inputText: "${maestro.copiedText}"
+- hideKeyboard
+# ---- 数量 ----
+- tapOn:
+    id: "et_stock_volume"
+- inputText: "${QTY}"
+- hideKeyboard
+# ---- 提交(连贯) ----
+- tapOn:
+    id: "btn_transaction"      # 「限价卖出」
+- tapOn:
+    id: "ok_btn"               # 「确认卖出」(股转卖出确认框)
+- assertVisible: "委托成功"
+- tapOn:
+    id: "ok_btn"
+# ---- 撤单 ----
+- tapOn: "撤单"
+- tapOn:
+    point: "50%,23%"           # 撤单列表第一行(canvas无id)，坐标按1260x2844
+- tapOn: "确定撤单"
+- assertVisible: "提交成功"
+- tapOn: "确定"

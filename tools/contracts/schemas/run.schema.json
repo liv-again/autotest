@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["input_excel", "app", "device", "git_commit", "prereq_rules", "mode", "status"],
+  "properties": {
+    "input_excel": {"type": "object", "required": ["path", "sha256"]},
+    "app": {"type": "object", "required": ["package", "version", "versionCode", "apk_sha256"]},
+    "device": {"type": "object", "required": ["serial", "os", "resolution"]},
+    "git_commit": {"type": "string"},
+    "prereq_rules": {"type": "object", "required": ["version", "sha256"]},
+    "selected_case_ids": {"type": "array", "items": {"type": "string"}},
+    "skipped_case_ids": {"type": "array", "items": {"type": "string"}},
+    "mode": {"enum": ["confirm_only", "simulated_submit"]},
+    "safety_constraint_hash": {"type": "string"},
+    "start_time": {"type": "string"},
+    "end_time": {"type": "string"},
+    "status": {"enum": ["running", "done", "aborted"]},
+    "recovery_point": {"type": ["string", "null"]}
+  }
+}

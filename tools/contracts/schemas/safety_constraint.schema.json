@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["mode", "env_ref", "code_allowlist", "qty_max", "price_rule", "account_allowlist_hmac", "constraint_hash", "source_selection_hash", "expires_at"],
+  "properties": {
+    "mode": {"enum": ["confirm_only", "simulated_submit"]},
+    "env_ref": {"type": "string"},
+    "code_allowlist": {"type": "array", "items": {"type": "string"}},
+    "qty_max": {"type": "integer", "minimum": 1},
+    "price_rule": {"enum": ["non_marketable"]},
+    "account_allowlist_hmac": {"type": "array", "items": {"type": "string"}},
+    "constraint_hash": {"type": "string"},
+    "source_selection_hash": {"type": "string"},
+    "expires_at": {"type": "string"}
+  }
+}

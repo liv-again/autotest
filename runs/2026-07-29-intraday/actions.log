@@ -1,0 +1,70 @@
+shot	runs/2026-07-29-intraday/shots/i00_current.png
+tap	--xy 159 2758
+tap	--id search
+type	950025
+tap	--xy 630 300
+shot	runs/2026-07-29-intraday/shots/i01_baojiatou.png
+tap	--xy 1008 624
+tap	--xy 185 383
+shot	runs/2026-07-29-intraday/shots/i02_baojiatou2.png
+tap	--xy 483 2758
+shot	runs/2026-07-29-intraday/shots/i03_buy_page.png
+tap	--xy 483 2724
+shot	runs/2026-07-29-intraday/shots/i04_buy_page.png
+tap	--xy 363 2724
+shot	runs/2026-07-29-intraday/shots/i05_putong_buy.png
+tap	--xy 125 366
+shot	runs/2026-07-29-intraday/shots/i06_buy_form.png
+tap	--xy 454 1000
+type	100
+key	back
+shot	runs/2026-07-29-intraday/shots/i07_before_buy.png
+tap	--xy 454 1332
+shot	runs/2026-07-29-intraday/shots/i08_confirm_dialog.png
+tap	--xy 846 1853
+shot	runs/2026-07-29-intraday/shots/i09_buy_result.png
+tap	--xy 628 1700
+tap	--xy 629 366
+shot	runs/2026-07-29-intraday/shots/i10_chedan.png
+tap	--xy 1129 366
+shot	runs/2026-07-29-intraday/shots/i11_query.png
+tap	--xy 166 689
+shot	runs/2026-07-29-intraday/shots/i12_dangri_weituo.png
+tap	--xy 1153 220
+key	back
+tap	--xy 126 368
+tap	--xy 454 425
+type	950025
+shot	runs/2026-07-29-intraday/shots/i13_buy_reenter.png
+tap	--xy 454 507
+type	950025
+key	back
+shot	runs/2026-07-29-intraday/shots/i14_sell_form.png
+tap	--xy 625 715
+shot	runs/2026-07-29-intraday/shots/i15_sell_filled.png
+tap	--xy 126 368
+tap	--xy 454 425
+type	950025
+tap	--xy 625 715
+tap	--xy 81 771
+shot	runs/2026-07-29-intraday/shots/i16_shijia.png
+tap	--xy 126 368
+tap	--xy 454 1000
+type	100
+key	back
+shot	runs/2026-07-29-intraday/shots/i17_buy_ready.png
+tap	--xy 454 1332
+tap	--xy 846 1853
+shot	runs/2026-07-29-intraday/shots/i18_submit_result.png
+tap	--xy 628 1700
+tap	--xy 629 366
+shot	runs/2026-07-29-intraday/shots/i19_chedan_list.png
+tap	--xy 630 653
+shot	runs/2026-07-29-intraday/shots/i20_chedan_confirm.png
+tap	--xy 853 1853
+shot	runs/2026-07-29-intraday/shots/i21_chedan_done.png
+tap	--xy 628 1700
+tap	--xy 630 653
+tap	--xy 853 1853
+tap	--xy 628 1700
+shot	runs/2026-07-29-intraday/shots/i22_cleanup.png

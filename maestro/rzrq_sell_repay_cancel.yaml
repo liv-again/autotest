@@ -1,0 +1,54 @@
+# 融资融券(两融) · 卖券还款 限价卖出 → 撤单（国金证券）
+# 前置：已登录【信用/两融账号】/ 交易时段 / SELL_CODE 是有担保品持仓且账户有【融资负债】的北交所ETF(默认950025)
+# 语义：卖出担保品持仓、成交后自动偿还融资负债。用涨停价挂单→不成交→撤单，不实际还款、零残留。
+# ⚠️ 选择器来自 2026-07-29 实时校验；Maestro 未安装，跑前需 `maestro test` 验证。
+appId: com.hexin.plat.android.GuoJinZXGSecurity
+env:
+  SELL_CODE: "950025"
+  QTY: "100"
+---
+- launchApp
+- tapOn: "交易"
+- tapOn:
+    id: "tv_tab_rzrq"
+- tapOn:
+    id: "tv_menu_text"
+    text: "卖券还款"
+- assertVisible:
+    id: "auto_stockcode"
+# ---- 点代码框弹『我的持仓』→ 按代码选中回填 ----
+- tapOn:
+    id: "auto_stockcode"
+- tapOn:
+    text: "${SELL_CODE}"
+- assertVisible:
+    id: "couldbuy"
+# ---- 委托价 = 涨停价(不成交、可撤) ----
+- copyTextFrom:
+    id: "zhangtingprice"
+- tapOn:
+    id: "stockprice"
+- eraseText
+- inputText: "${maestro.copiedText}"
+- hideKeyboard
+# ---- 数量 ----
+- tapOn:
+    id: "stockvolume"
+- inputText: "${QTY}"
+- hideKeyboard
+# ---- 提交(连贯：卖券还款→确认卖出) ----
+- tapOn:
+    id: "btn_buy"              # 「卖券还款」提交
+- tapOn: "确认卖出"            # 确认框(卖券还款委托)
+- assertVisible: "委托成功"
+- tapOn: "确定"
+# ---- 撤单：菜单撤单 → 撤最新一条(撤信用融资单) → 确认 ----
+- tapOn:
+    id: "tv_menu_text"
+    text: "撤单"
+- tapOn:
+    id: "dragablelistviewitem"
+    index: 0
+- tapOn: "确定"
+- assertVisible: "提交成功"
+- tapOn: "确定"

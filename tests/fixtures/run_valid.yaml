@@ -1,0 +1,27 @@
+input_excel:
+  path: "/data/tests.xlsx"
+  sha256: "1a2b3c4d5e6f7g8h9i0j"
+app:
+  package: "com.sixgill.test"
+  version: "1.0.0"
+  versionCode: 100
+  apk_sha256: "9z8y7x6w5v4u3t2s1r0q"
+device:
+  serial: "ABC123XYZ789"
+  os: "14.0"
+  resolution: "1080x1920"
+git_commit: "abc1234def5678ghi90"
+prereq_rules:
+  version: "2.1.0"
+  sha256: "xyz9876abc5432def12"
+selected_case_ids:
+  - "case_001"
+  - "case_002"
+skipped_case_ids:
+  - "case_003"
+mode: "confirm_only"
+safety_constraint_hash: "hash123"
+start_time: "2026-07-29T10:00:00Z"
+end_time: "2026-07-29T11:00:00Z"
+status: "done"
+recovery_point: null

@@ -1,0 +1,55 @@
+# 普通交易 · 限价买入 → 撤单（国金证券）
+# 前置：已登录模拟账户 / 交易时段 9:30-15:00 / BUY_CODE 为北交所ETF代码(无需持仓)
+# 策略：用「跌停价」作委托价 → 必挂已报不成交 → 撤单 → 账户零残留
+appId: com.hexin.plat.android.GuoJinZXGSecurity
+env:
+  BUY_CODE: "950025"
+  QTY: "100"
+---
+- launchApp
+# ---- 进入 交易 → 买入 ----
+- tapOn: "交易"
+- tapOn:
+    id: "tv_menu_text"
+    text: "买入"
+- assertVisible:
+    id: "auto_stockcode"
+# ---- 输入代码 → 点下拉建议项回填 ----
+- tapOn:
+    id: "auto_stockcode"
+- inputText: "${BUY_CODE}"
+- tapOn:
+    id: "stock_code_tv"        # 下拉建议(代码)，必须点选才回填
+- assertVisible:
+    id: "couldbuy"             # 回填成功标志(可买--股)
+# ---- 委托价 = 跌停价(不成交、可撤) ----
+- copyTextFrom:
+    id: "dietingprice"
+- tapOn:
+    id: "stockprice"
+- eraseText
+- inputText: "${maestro.copiedText}"
+- hideKeyboard
+# ---- 数量 ----
+- tapOn:
+    id: "stockvolume"
+- inputText: "${QTY}"
+- hideKeyboard
+# ---- 提交(连贯：买入→确认买入，防「请勿重复提交」锁) ----
+- tapOn:
+    id: "btn_transaction"      # 「买入」
+- tapOn:
+    id: "ok_btn"               # 「确认买入」(买入委托确认框)
+- assertVisible: "委托已提交"   # 委托已提交，合同号为：X
+- tapOn:
+    id: "ok_btn"               # 结果框「确定」
+# ---- 撤单：进撤单页 → 撤最新一条 → 确认 ----
+- tapOn: "撤单"
+- assertVisible:
+    id: "codelist"
+- tapOn:
+    id: "result0"              # 撤单列表第一条(最新委托在最上)
+    index: 0
+- tapOn: "确定"                # 撤单确认框「确定」
+- assertVisible: "撤单已提交"
+- tapOn: "确定"

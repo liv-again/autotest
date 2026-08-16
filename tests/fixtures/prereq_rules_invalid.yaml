@@ -1,0 +1,9 @@
+version: 1
+rules:
+  - id: bad-rule
+    applies_to: {app: "*", market: "北交所"}
+    match: {all: ["买入"], any: [], none: []}
+    requires: {instrument: {market: "北交所", product: "ETF"}, account: "any"}
+    priority: 1
+    confidence: "高"
+    provenance: "国金728实测"

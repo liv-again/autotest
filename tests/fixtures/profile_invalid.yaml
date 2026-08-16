@@ -1,0 +1,6 @@
+slug: guojin
+app_version: "8.05.001"
+entries:
+  - {path: "交易→买入", last_verified: "2026-07-29", app_version: "8.05.001", evidence_run: "r1", status: verified}   # ★缺 required: key
+capabilities: []
+verified_chains: []

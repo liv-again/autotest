@@ -1,0 +1,15 @@
+# guojin_728_gold.yaml （no_prereq/纯展示用例可省略；只列需备码 gold + 1 条 no_prereq 对照）
+# 注：TC-017 故意不列——它是对抗过触发样本，引擎过报为 positive 但真值无需备码，缺席即被计为误报（宽松上界内）。
+gold:
+  TC-001: {polarity: "no_prereq", required_account: "any", instrument: {market: "北交所", product: "ETF"}}
+  TC-003: {polarity: "positive", required_account: "any", instrument: {market: "北交所", product: "ETF", has_holding: true}}
+  TC-004: {polarity: "positive", required_account: "any", instrument: {market: "北交所", product: "ETF", orderbook_depth: true}}
+  TC-005: {polarity: "positive", required_account: "any", instrument: {market: "北交所", product: "ETF", has_nav: true}}
+  TC-006: {polarity: "positive", required_account: "信用", instrument: {market: "北交所", product: "ETF", collateral_eligible: true}}
+  TC-007: {polarity: "positive", required_account: "信用", instrument: {market: "北交所", product: "ETF", has_holding: true, collateral_eligible: true}}  # 担保品卖出=卖出∧担保品:属性并集(补 has_holding)
+  TC-010: {polarity: "positive", required_account: "信用", instrument: {market: "北交所", product: "ETF", financing_eligible: true}}
+  TC-011: {polarity: "negative_property", required_account: "any", instrument: {market: "北交所", product: "ETF", financing_eligible: false}}
+  TC-013: {polarity: "positive", required_account: "any", instrument: {market: "北交所", product: "ETF", in_subscription: true}}
+  TC-014: {polarity: "negative_property", required_account: "普通", instrument: {}}
+  TC-015: {polarity: "positive", required_account: "信用", instrument: {market: "北交所", product: "ETF", financing_eligible: true}}   # 近义仍应命中
+  TC-016: {polarity: "negative_property", required_account: "any", instrument: {market: "北交所", product: "ETF", financing_eligible: false}}  # 近义漏识别→拉低recall

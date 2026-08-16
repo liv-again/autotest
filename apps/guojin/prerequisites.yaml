@@ -1,0 +1,71 @@
+slug: guojin
+account_capabilities:
+  - {alias: pt, type: 普通, capabilities: ["北交所交易", "全权限"], mask: "***5183"}
+  - {alias: xy, type: 信用, capabilities: ["两融", "担保品持仓", "可用保证金"], mask: "***2927"}
+instrument_properties:
+  # props 为人读展示串（脚本派生前置条件.md）；补齐 t0 使所有 950xxx 系列 T+0 与 known_codes.attributes 一致。
+  - {code: "950025", name: "北证50ETF测试39", props: ["北交所ETF", "t0", "collateral", "non_financing"]}
+  - {code: "950022", name: "北证50ETF测试36", props: ["北交所ETF", "t0", "collateral"]}
+  - {code: "950027", name: "北证50ETF测试41", props: ["北交所ETF", "t0", "collateral"]}
+  - {code: "950001", name: "北证50ETF测试2", props: ["北交所ETF", "t0", "has_nav", "iopv"]}
+  - {code: "950015", name: "北证50ETF测试29", props: ["北交所ETF", "t0", "holding"]}
+  - {code: "600008", name: "首创股份", props: ["A股", "no_iopv", "financing"]}
+  - {code: "510300", name: "沪深300ETF", props: ["沪深ETF", "financing"]}
+  - {code: "510050", name: "上证50ETF", props: ["沪深ETF"]}
+  - {code: "430019", name: "新松佳和", props: ["北交所股票"]}
+  - {code: "900901", name: "云赛B股", props: ["沪深B股"]}
+  - {code: "100706", name: "国债0706", props: ["沪深债券", "t0"]}
+  - {code: "123207", name: "冠中转债", props: ["沪深可转债", "t0"]}
+known_codes:
+  # attributes 是引擎权威词表：prereq_extract 的解析器只读 attributes、按属性子集匹配
+  # requires.instrument（prereq_rules.yaml）。故 market/product 必须入 attributes（顶层 market
+  # 仅供 schema/派生 md），键名对齐规则：has_holding/collateral_eligible/orderbook_depth/
+  # in_subscription/has_nav/financing_eligible/t0（勿再用 holding/collateral 等引擎不认的旧名）。
+  - code: "950025"
+    name: "北证50ETF测试39"
+    market: 北交所
+    attributes: {market: 北交所, product: ETF, t0: true, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: true, financing_eligible: false, in_subscription: false}
+  - code: "950022"
+    name: "北证50ETF测试36"
+    market: 北交所
+    attributes: {market: 北交所, product: ETF, t0: true, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: true, financing_eligible: false, in_subscription: false}
+  - code: "950027"
+    name: "北证50ETF测试41"
+    market: 北交所
+    attributes: {market: 北交所, product: ETF, t0: true, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: true, financing_eligible: false, in_subscription: false}
+  - code: "950001"
+    name: "北证50ETF测试2"
+    market: 北交所
+    attributes: {market: 北交所, product: ETF, t0: true, has_nav: true, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+  - code: "950015"
+    name: "北证50ETF测试29"
+    market: 北交所
+    attributes: {market: 北交所, product: ETF, t0: true, has_nav: false, has_holding: true, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+  - code: "600008"
+    name: "首创股份"
+    market: 沪深
+    attributes: {market: 沪深, product: 股票, t0: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: true, in_subscription: false}
+  - code: "510300"
+    name: "沪深300ETF"
+    market: 沪深
+    attributes: {market: 沪深, product: ETF, t0: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: true, in_subscription: false}
+  - code: "510050"
+    name: "上证50ETF"
+    market: 沪深
+    attributes: {market: 沪深, product: ETF, t0: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+  - code: "430019"
+    name: "新松佳和"
+    market: 北交所
+    attributes: {market: 北交所, product: 股票, t0: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+  - code: "900901"
+    name: "云赛B股"
+    market: 沪深
+    attributes: {market: 沪深, product: 股票, t0: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+  - code: "100706"
+    name: "国债0706"
+    market: 沪深
+    attributes: {market: 沪深, product: 债券, t0: true, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+  - code: "123207"
+    name: "冠中转债"
+    market: 沪深
+    attributes: {market: 沪深, product: 可转债, t0: true, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}

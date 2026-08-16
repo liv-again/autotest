@@ -1,0 +1,57 @@
+# 融资融券(两融) · 担保品限价卖出 → 撤单（国金证券）
+# 前置：已登录【信用/两融账号】/ 交易时段 / SELL_CODE 必须是该信用账户【有担保品持仓】的北交所ETF(默认950025)
+# 策略：涨停价委托 → 必挂已报不成交 → 撤单 → 账户零残留
+# ⚠️ 选择器来自 2026-07-29 实时校验；Maestro 未安装，跑前需 `maestro test` 验证。
+# ⚠️ 价格来源 zhangtingprice 文本形如「涨停125.063」含前缀——若价格框校验失败，改用 env 固定非成交价。
+# ⚠️ 卖出页默认展示『我的持仓』列表，按代码文本选中回填(顺序随持仓变化)。
+appId: com.hexin.plat.android.GuoJinZXGSecurity
+env:
+  SELL_CODE: "950025"
+  QTY: "100"
+---
+- launchApp
+# ---- 交易 → 融资融券子tab → 担保品卖出 ----
+- tapOn: "交易"
+- tapOn:
+    id: "tv_tab_rzrq"
+- tapOn:
+    id: "tv_menu_text"
+    text: "担保品卖出"
+- assertVisible:
+    id: "auto_stockcode"
+# ---- 点代码框弹『我的持仓』→ 按代码选中回填(选后勿返回) ----
+- tapOn:
+    id: "auto_stockcode"
+- tapOn:
+    text: "${SELL_CODE}"        # 我的持仓行(search_log_list_item0)
+- assertVisible:
+    id: "couldbuy"             # 可卖--股
+# ---- 委托价 = 涨停价(不成交、可撤) ----
+- copyTextFrom:
+    id: "zhangtingprice"
+- tapOn:
+    id: "stockprice"
+- eraseText
+- inputText: "${maestro.copiedText}"
+- hideKeyboard
+# ---- 数量 ----
+- tapOn:
+    id: "stockvolume"
+- inputText: "${QTY}"
+- hideKeyboard
+# ---- 提交(连贯：担保品卖出→确认卖出) ----
+- tapOn:
+    id: "btn_buy"              # 「担保品卖出」提交(id 复用 btn_buy)
+- tapOn: "确认卖出"            # 确认框(信用卖出委托)
+- assertVisible: "委托成功"
+- tapOn: "确定"
+# ---- 撤单：菜单撤单 → 撤最新一条 → 确认 ----
+- tapOn:
+    id: "tv_menu_text"
+    text: "撤单"
+- tapOn:
+    id: "dragablelistviewitem"
+    index: 0
+- tapOn: "确定"
+- assertVisible: "提交成功"
+- tapOn: "确定"

@@ -1,0 +1,50 @@
+# 闪电买入 → 撤单（国金证券）  ★坐标法·设备相关(标定于 1260×2844)★
+# 前置：已登录 / 交易时段 / BUY_CODE 北交所ETF代码
+# ⚠️ 闪电面板是 canvas，价格/数量/仓位/买入键无 resource-id，只能按屏幕百分比点击 →
+#    换设备/分辨率必须重新校准这些 point。导航(行情搜索/下单/闪电买入)与确认框/撤单走 id，稳。
+# ⚠️ 面板无法 copyTextFrom 读跌停价 → 用 PRICE_TICKS 次「价格-」把委托价压到买1下方近似不成交；
+#    当日波动大仍可能成交，【零残留不保证】。要严格零残留回归请用 putong_limit_buy_cancel.yaml。
+appId: com.hexin.plat.android.GuoJinZXGSecurity
+env:
+  BUY_CODE: "950025"
+  PRICE_TICKS: "8"        # 「价格-」点击次数(每次 -0.001)
+---
+- launchApp
+# ---- 行情搜索 → 个股详情(整码自动进详情) ----
+- tapOn: "行情"
+- tapOn:
+    id: "search_layout"
+- inputText: "${BUY_CODE}"
+- assertVisible:
+    id: "xiadan_text"          # 详情页底部「下单」
+# ---- 下单 → 闪电买入 ----
+- tapOn:
+    id: "xiadan"
+- tapOn:
+    id: "flash_buy_imageview"  # 下单菜单「闪电买入」(有id)
+# ---- 面板(坐标)：数量+ → 100；价格- ×PRICE_TICKS ----
+- tapOn:
+    point: "91%,78%"           # 数量「+」空→100
+- repeat:
+    times: "${PRICE_TICKS}"
+    commands:
+      - tapOn:
+          point: "8%,78%"      # 价格「-」
+# ---- 提交：买入键(坐标·键盘红键) → 确认买入(id) ----
+- tapOn:
+    point: "89%,96%"           # 键盘右下「买入」红键
+- tapOn:
+    id: "ok_btn"               # 「确认买入」确认框(有id)
+- assertVisible: "委托已提交"   # 委托已提交，合同号为：X
+- tapOn: "关闭"                # 闪电结果框是「关闭 / 查看是否成交」
+# ---- 撤单：下单→撤单查询 → 撤最新一条 → 确认 ----
+- tapOn:
+    id: "xiadan"
+- tapOn:
+    id: "chedan_imageview"     # 「撤单/查询」(有id)
+- tapOn:
+    id: "result0"              # 撤单列表第一条(最新在最上)
+    index: 0
+- tapOn: "确定"
+- assertVisible: "撤单已提交"
+- tapOn: "确定"

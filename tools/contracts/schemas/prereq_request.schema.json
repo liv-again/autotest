@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["rules_version", "cases", "unidentified", "conflicts", "summary"],
+  "properties": {
+    "rules_version": {"type": "integer"},
+    "generated_from": {"type": "object"},
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["tc_id", "title", "matched_rule_ids", "status", "required_instruments", "required_account", "polarity", "needed_codes"],
+        "properties": {
+          "tc_id": {"type": "string"},
+          "title": {"type": "string"},
+          "matched_rule_ids": {"type": "array", "items": {"type": "string"}},
+          "status": {"enum": ["identified", "unidentified", "conflict"]},
+          "required_instruments": {"type": "array", "items": {"type": "object"}},
+          "required_account": {"type": "string"},
+          "polarity": {"enum": ["positive", "negative_property", "no_prereq", "unknown"]},
+          "needed_codes": {"type": "array", "items": {"type": "string"}},
+          "provenance": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "unidentified": {"type": "array", "items": {"type": "string"}},
+    "conflicts": {"type": "array", "items": {"type": "object"}},
+    "summary": {"type": "object"}
+  }
+}

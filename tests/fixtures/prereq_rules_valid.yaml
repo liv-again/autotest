@@ -1,0 +1,18 @@
+version: 1
+rules:
+  - id: basic-bjse-etf
+    applies_to: {app: "*", market: "北交所"}
+    match: {all: ["买入"], any: [], none: ["融资", "融券", "大宗"]}
+    requires: {instrument: {market: "北交所", product: "ETF"}, account: "any"}
+    polarity: no_prereq
+    priority: 1
+    confidence: high
+    provenance: "国金728实测"
+  - id: sell-needs-holding
+    applies_to: {app: "*", market: "北交所"}
+    match: {all: ["卖出"], any: [], none: ["融券", "大宗"]}
+    requires: {instrument: {market: "北交所", product: "ETF", has_holding: true}, account: "any"}
+    polarity: positive
+    priority: 5
+    confidence: high
+    provenance: "国金728实测"

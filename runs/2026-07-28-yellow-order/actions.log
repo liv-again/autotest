@@ -1,0 +1,20 @@
+key	BACK
+tap	--xy 787 2758
+screen	
+tap	--xy 1162 220
+tap	--xy 787 2758
+screen	
+tap	--xy 183 1164
+screen	
+tap	--xy 454 505
+screen	
+tap	--xy 357 665
+screen	
+tap	--xy 513 774
+tap	--xy 454 1000
+screen	
+tap	--xy 454 1332
+screen	
+tap	--xy 857 1855
+screen	
+tap	--xy 629 1698

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["selected_ids", "skipped_ids", "incidental_ids", "priority_source", "scope_hash"],
+  "properties": {
+    "selected_ids": {"type": "array", "items": {"type": "string"}},
+    "skipped_ids": {"type": "array", "items": {"type": "object", "required": ["id", "reason"]}},
+    "incidental_ids": {"type": "array", "items": {"type": "string"}},
+    "priority_source": {"type": "string"},
+    "scope_hash": {"type": "string"}
+  }
+}

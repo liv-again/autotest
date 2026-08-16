@@ -1,0 +1,8 @@
+slug: guojin
+app_version: "8.05.001"
+entries:
+  - {key: trade.putong.buy, path: "交易→买入", last_verified: "2026-07-29", app_version: "8.05.001", evidence_run: "2026-07-29-guojin-r1", status: verified}
+capabilities:
+  - {key: cap.putong.limit_buy, supported: true, note: "限价买入", last_verified: "2026-07-29", status: verified}
+verified_chains:
+  - {key: chain.putong.buy_cancel, steps: ["买入", "撤单"], last_verified: "2026-07-29", evidence_run: "2026-07-29-guojin-r1", status: verified}

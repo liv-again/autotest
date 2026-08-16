@@ -1,0 +1,8 @@
+.secrets/*
+!.secrets/README.md
+!.secrets/*.example
+runs/**/snapshots/
+*.private.png
+__pycache__/
+*.pyc
+草稿.md

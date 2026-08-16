@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["slug", "account_capabilities", "instrument_properties", "known_codes"],
+  "additionalProperties": false,
+  "properties": {
+    "slug": {"type": "string"},
+    "account_capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["alias", "type", "capabilities", "mask"],
+        "additionalProperties": false,
+        "properties": {
+          "alias": {"type": "string"},
+          "type": {"type": "string"},
+          "capabilities": {"type": "array", "items": {"type": "string"}},
+          "mask": {"type": "string", "pattern": "^\\*{2,}[0-9]{2,4}$"}
+        }
+      }
+    },
+    "instrument_properties": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "name", "props"],
+        "additionalProperties": false,
+        "properties": {
+          "code": {"type": "string"},
+          "name": {"type": "string"},
+          "props": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "known_codes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "name", "market", "attributes"],
+        "additionalProperties": false,
+        "properties": {
+          "code": {"type": "string"},
+          "name": {"type": "string"},
+          "market": {"type": "string"},
+          "attributes": {"type": "object"}
+        }
+      }
+    }
+  }
+}

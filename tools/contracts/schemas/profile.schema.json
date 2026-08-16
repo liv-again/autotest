@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["slug", "app_version", "entries", "capabilities", "verified_chains"],
+  "additionalProperties": false,
+  "properties": {
+    "slug": {"type": "string"},
+    "app_version": {"type": "string"},
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "path", "last_verified", "app_version", "evidence_run", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "key": {"type": "string"},
+          "path": {"type": "string"},
+          "last_verified": {"type": "string"},
+          "app_version": {"type": "string"},
+          "evidence_run": {"type": "string"},
+          "status": {"enum": ["verified", "stale", "unverified"]}
+        }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "supported", "note", "last_verified", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "key": {"type": "string"},
+          "supported": {"type": "boolean"},
+          "note": {"type": "string"},
+          "last_verified": {"type": "string"},
+          "status": {"enum": ["verified", "stale", "unverified"]}
+        }
+      }
+    },
+    "verified_chains": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["key", "steps", "last_verified", "evidence_run", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "key": {"type": "string"},
+          "steps": {"type": "array", "items": {"type": "string"}},
+          "last_verified": {"type": "string"},
+          "evidence_run": {"type": "string"},
+          "status": {"enum": ["verified", "stale", "unverified"]}
+        }
+      }
+    }
+  }
+}

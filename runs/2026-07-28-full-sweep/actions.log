@@ -1,0 +1,84 @@
+screen	
+tap	--id search
+type	950025
+screen	
+shot	runs/2026-07-28-full-sweep/shots/f01_detail_950025.png
+tap	--xy 315 2054
+shot	runs/2026-07-28-full-sweep/shots/f02_news.png
+tap	--xy 1192 624
+shot	runs/2026-07-28-full-sweep/shots/f03_fenshi_setting.png
+tap	--xy 1120 2580
+shot	runs/2026-07-28-full-sweep/shots/f04_iopv_off.png
+tap	--xy 1181 2099
+shot	runs/2026-07-28-full-sweep/shots/f05_iopv_off_chart.png
+tap	--xy 1192 624
+tap	--xy 1120 2580
+tap	--xy 1181 2099
+tap	--xy 265 624
+tap	--xy 1192 624
+shot	runs/2026-07-28-full-sweep/shots/f06_kline_setting.png
+tap	--xy 1181 2099
+tap	--xy 91 624
+swipe	630 2300 630 1200
+shot	runs/2026-07-28-full-sweep/shots/f07_detail_scroll.png
+tap	--xy 1104 2758
+shot	runs/2026-07-28-full-sweep/shots/f08_bottom_more.png
+tap	--xy 632 2790
+swipe	630 1000 630 2200
+tap	--xy 1008 624
+shot	runs/2026-07-28-full-sweep/shots/f09_chart_more.png
+tap	--xy 1172 220
+type	9500
+shot	runs/2026-07-28-full-sweep/shots/f10_search_list.png
+tap	--xy 1160 220
+key	back
+tap	--xy 1027 1225
+shot	runs/2026-07-28-full-sweep/shots/f11_etf_list.png
+tap	--xy 846 366
+shot	runs/2026-07-28-full-sweep/shots/f12_etf_asc.png
+swipe	630 1600 630 700
+swipe	630 1600 630 700
+key	back
+tap	--xy 787 2758
+shot	runs/2026-07-28-full-sweep/shots/f13_trade_home.png
+tap	--xy 365 2146
+shot	runs/2026-07-28-full-sweep/shots/f14_xsb_home.png
+tap	--xy 126 788
+shot	runs/2026-07-28-full-sweep/shots/f15_xsb_buy_empty.png
+tap	--xy 471 576
+type	950025
+shot	runs/2026-07-28-full-sweep/shots/f16_xsb_code.png
+tap	--xy 625 713
+shot	runs/2026-07-28-full-sweep/shots/f17_xsb_selected.png
+tap	--xy 840 805
+tap	--xy 103 805
+tap	--xy 103 805
+tap	--xy 103 805
+tap	--xy 218 805
+tap	--xy 218 805
+shot	runs/2026-07-28-full-sweep/shots/f18_xsb_price.png
+tap	--xy 471 1037
+type	50
+tap	--xy 840 1037
+shot	runs/2026-07-28-full-sweep/shots/f19_xsb_volume.png
+key	back
+key	back
+key	back
+tap	--xy 176 2579
+shot	runs/2026-07-28-full-sweep/shots/f20_dazong.png
+tap	--xy 873 2364
+shot	runs/2026-07-28-full-sweep/shots/f21_dazong_menu.png
+tap	--xy 609 725
+shot	runs/2026-07-28-full-sweep/shots/f22_dazong_buy.png
+tap	--xy 454 407
+type	950025
+shot	runs/2026-07-28-full-sweep/shots/f23_dz_code.png
+tap	--xy 625 560
+shot	runs/2026-07-28-full-sweep/shots/f24_dz_selected.png
+tap	--xy 806 575
+tap	--xy 103 575
+key	back
+swipe	630 2200 630 1400
+shot	runs/2026-07-28-full-sweep/shots/f25_dz_holdings.png
+tap	--xy 300 1573
+shot	runs/2026-07-28-full-sweep/shots/f26_dz_huifill.png

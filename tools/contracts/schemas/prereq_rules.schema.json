@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["version", "rules"],
+  "properties": {
+    "version": {"type": "integer", "minimum": 1},
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "applies_to", "match", "requires", "polarity", "priority", "confidence", "provenance"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "applies_to": {
+            "type": "object",
+            "required": ["app", "market"],
+            "properties": {"app": {"type": "string"}, "market": {"type": "string"}}
+          },
+          "match": {
+            "type": "object",
+            "properties": {
+              "all": {"type": "array", "items": {"type": "string"}},
+              "any": {"type": "array", "items": {"type": "string"}},
+              "none": {"type": "array", "items": {"type": "string"}}
+            },
+            "anyOf": [
+              {"required": ["all"], "properties": {"all": {"minItems": 1}}},
+              {"required": ["any"], "properties": {"any": {"minItems": 1}}},
+              {"required": ["none"], "properties": {"none": {"minItems": 1}}}
+            ]
+          },
+          "requires": {
+            "type": "object",
+            "properties": {
+              "instrument": {"type": "object"},
+              "account": {"enum": ["any", "普通", "信用"]}
+            }
+          },
+          "polarity": {"enum": ["positive", "negative_property", "no_prereq"]},
+          "expected_capability": {"type": "object"},
+          "priority": {"type": "integer"},
+          "confidence": {"enum": ["high", "medium", "low"]},
+          "provenance": {"type": "string"}
+        }
+      }
+    }
+  }
+}

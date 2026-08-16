@@ -1,0 +1,14 @@
+mode: "confirm_only"
+env_ref: "prod"
+code_allowlist:
+  - "600000"
+  - "688001"
+  - "688002"
+qty_max: 1000
+price_rule: "non_marketable"
+account_allowlist_hmac:
+  - "hmac_account_001"
+  - "hmac_account_002"
+constraint_hash: "hash_constraint_abc123"
+source_selection_hash: "hash_selection_def456"
+expires_at: "2026-12-31T23:59:59Z"

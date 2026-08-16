@@ -1,0 +1,12 @@
+slug: guojin
+aliases: [国金, 国金证券]
+packages: [com.hexin.plat.android.GuoJinZXGSecurity]
+verified_versions:
+  - {version: "8.05.001", verified_at: "2026-07-29"}
+compatibility: {min: "8.05.001", max_exclusive: "8.06.000"}
+test_accounts:
+  - {alias: pt, type: 普通, mask: "***5183"}
+  - {alias: xy, type: 信用, mask: "***2927"}
+environment: env.yaml
+profile: profile.yaml
+prerequisites: prerequisites.yaml

@@ -1,0 +1,48 @@
+# 闪电卖出 → 撤单（国金证券）  ★坐标法·设备相关(标定于 1260×2844)★
+# 前置：已登录 / 交易时段 / SELL_CODE 必须是【账户有持仓】的北交所ETF(默认950015)
+# ⚠️ 同 flash_buy_cancel：面板 canvas 无 id，point 换设备需重标；委托价用 PRICE_TICKS 次「价格+」
+#    抬到卖1上方近似不成交，零残留不保证。严格零残留请用 putong_limit_sell_cancel.yaml。
+appId: com.hexin.plat.android.GuoJinZXGSecurity
+env:
+  SELL_CODE: "950015"
+  PRICE_TICKS: "8"        # 「价格+」点击次数(每次 +0.001)
+---
+- launchApp
+# ---- 行情搜索 → 个股详情 ----
+- tapOn: "行情"
+- tapOn:
+    id: "search_layout"
+- inputText: "${SELL_CODE}"
+- assertVisible:
+    id: "xiadan_text"
+# ---- 下单 → 闪电卖出 ----
+- tapOn:
+    id: "xiadan"
+- tapOn:
+    id: "flash_sale_imageview" # 下单菜单「闪电卖出」(有id)
+# ---- 面板(坐标)：数量+ → 100；价格+ ×PRICE_TICKS ----
+- tapOn:
+    point: "91%,78%"           # 数量「+」空→100
+- repeat:
+    times: "${PRICE_TICKS}"
+    commands:
+      - tapOn:
+          point: "42%,78%"     # 价格「+」
+# ---- 提交：卖出键(坐标·键盘蓝键) → 确认卖出(id) ----
+- tapOn:
+    point: "89%,96%"           # 键盘右下「卖出」蓝键
+- tapOn:
+    id: "ok_btn"               # 「确认卖出」确认框(有id)
+- assertVisible: "委托已提交"
+- tapOn: "关闭"
+# ---- 撤单：下单→撤单查询 → 撤最新 → 确认 ----
+- tapOn:
+    id: "xiadan"
+- tapOn:
+    id: "chedan_imageview"
+- tapOn:
+    id: "result0"
+    index: 0
+- tapOn: "确定"
+- assertVisible: "撤单已提交"
+- tapOn: "确定"

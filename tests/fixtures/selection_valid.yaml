@@ -1,0 +1,14 @@
+selected_ids:
+  - "case_001"
+  - "case_002"
+  - "case_003"
+skipped_ids:
+  - id: "case_004"
+    reason: "environment_not_ready"
+  - id: "case_005"
+    reason: "dependency_missing"
+incidental_ids:
+  - "case_006"
+  - "case_007"
+priority_source: "manual_triage"
+scope_hash: "abc123def456"

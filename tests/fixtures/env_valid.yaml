@@ -1,0 +1,10 @@
+type: simulation
+assurance_level: operator_attested
+revoked: false
+evidence:
+  attested_by: shenjie
+  attested_at: "2026-07-29"
+  valid_until: "2026-10-29"
+  package: com.hexin.plat.android.GuoJinZXGSecurity
+  version_range: {min: "8.05.001", max_exclusive: "8.06.000"}
+  account_aliases: [pt, xy]

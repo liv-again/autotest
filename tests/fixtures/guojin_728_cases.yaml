@@ -1,0 +1,18 @@
+# 本文件为蒸馏合成 fixture（无真实Excel语料），验收裁决引擎机制、不主张真实召回；真语料接入后复测。
+cases:
+  - {tc_id: "TC-001", title: "北交所ETF 限价买入"}                       # no_prereq
+  - {tc_id: "TC-002", title: "北交所ETF 详情页 简报价字段"}              # 纯展示→预期 unidentified，不计召回
+  - {tc_id: "TC-003", title: "北交所ETF 限价卖出", keywords: ["可卖持仓"]}
+  - {tc_id: "TC-004", title: "北交所ETF 市价买入 提交成功", keywords: ["盘口深度"]}
+  - {tc_id: "TC-005", title: "IOPV 线 溢价率 字段显示"}
+  - {tc_id: "TC-006", title: "担保品买入 北交所ETF"}
+  - {tc_id: "TC-007", title: "担保品卖出 北交所ETF"}
+  - {tc_id: "TC-010", title: "融资买入 北交所ETF", keywords: ["融资标的"]}
+  - {tc_id: "TC-011", title: "非融资标的 不可融资买入"}
+  - {tc_id: "TC-013", title: "认购状态 及 认购起止日期 字段"}
+  - {tc_id: "TC-014", title: "无权限 委托失败 提示"}
+  # —— 以下 3 条为 paraphrase/对抗集（标题不照抄关键词）——
+  - {tc_id: "TC-015", title: "信用账户融资买入委托"}                     # 近义仍命中(子串)
+  - {tc_id: "TC-016", title: "标的不在融资池的买入委托"}                 # 近义→覆盖缺口→unidentified
+  - {tc_id: "TC-017", title: "北交所ETF 市价档位 字段展示"}             # 对抗→过触发→误报
+  - {tc_id: "TC-099", title: "某个完全不在规则覆盖内的诡异用例"}         # 纯噪声→unidentified

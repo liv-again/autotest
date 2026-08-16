@@ -17,3 +17,26 @@ def test_prerequisites_valid():
 def test_prerequisites_rejects_full_account():
     _, errs = load_and_validate(FX / "prerequisites_invalid.yaml", "prerequisites")
     assert errs  # 裸 account_no / 非脱敏 mask 被拒
+
+
+def test_capabilities_allow_version_metadata():
+    # 回归守护（§七-8 修复）：capabilities 与 entries 对齐后，允许 app_version/evidence_run。
+    doc = {
+        "slug": "x",
+        "app_version": "9.02.10",
+        "entries": [],
+        "capabilities": [
+            {
+                "key": "cap.industry_panel",
+                "supported": False,
+                "note": "个股分时无行业板块",
+                "last_verified": "2026-08-10",
+                "app_version": "9.02.10",
+                "evidence_run": "2026-08-10-test-cases",
+                "status": "verified",
+            },
+        ],
+        "verified_chains": [],
+    }
+    from tools.contracts.validate import validate
+    assert validate(doc, "profile") == []

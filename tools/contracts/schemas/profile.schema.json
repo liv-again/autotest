@@ -33,6 +33,8 @@
           "supported": {"type": "boolean"},
           "note": {"type": "string"},
           "last_verified": {"type": "string"},
+          "app_version": {"type": "string"},
+          "evidence_run": {"type": "string"},
           "status": {"enum": ["verified", "stale", "unverified"]}
         }
       }

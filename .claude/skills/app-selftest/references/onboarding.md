@@ -23,13 +23,20 @@
 
 > 你的动作只有两个：**给 Excel + 备齐缺码**。其余系统托管。
 
-### B. 换一个 App（别的券商）—— 建骨架 + 认证一次
+### B. 换一个 App（别的券商）—— 建骨架 + explore mode 探索一次
 
-1. 建 `apps/<新slug>/`：`app.yaml`（身份/包/`verified_versions`/`compatibility`/账户脱敏别名+尾号/env·profile·prerequisites 引用）、`env.yaml`（负责人对该环境做一次 `operator_attested` 认证）、空的 `profile.yaml`/`prerequisites.yaml`。
-2. 国金是**同花顺/Hexin 白标**，同平台券商入口/resource-id 高度相似 → 拿 `apps/guojin/profile.yaml` 当起点对照差异。
-3. `tools/prereq_rules.yaml` 是**跨 app 的**（`applies_to.app: "*"`）→ 规则表直接复用；只补该 app 的 `prerequisites.yaml`（已知码/账户能力/标的属性）。
-4. 第一轮当 spike 跑、边跑边 `reback` 反哺，之后就快。
-5. 属性词表要一致：`prerequisites.yaml` 的 `known_codes[].attributes` 键必须与 `prereq_rules.yaml` 的 `requires.instrument` 键同一套（`market/product/has_nav/has_holding/collateral_eligible/financing_eligible/orderbook_depth/...`），否则 `needed_codes` 解析不出码（有 `tests/apps/test_prereq_integration.py` 守）。
+1. **建骨架**（`tools/init_app.py`，秒级完成）：生成过 schema 的 `app.yaml`/`profile.yaml`/`prerequisites.yaml` + 派生 md；**`env.yaml` 需人工创建**（认证永不自动生成，P0）。
+   ```bash
+   python tools/init_app.py <slug> --package <包名> --version <版本> [--seed-from apps/guojin]
+   ```
+   **生成后两个字段需人工补/确认**：
+   - `test_accounts`（空数组 → 补脱敏账户别名+尾号，如 `{alias: pt, type: 普通, mask: "***5183"}`）——脱敏敏感数据，生成器刻意留空；
+   - `compatibility.max_exclusive`（占位 `999.999.999` → 收紧到实际兼容上限）——否则版本越界校验形同虚设。
+2. 国金是**同花顺/Hexin 白标**，同平台券商入口/resource-id 高度相似 → `--seed-from apps/guojin` 自动抄 16 条入口（标 `unverified`），explore mode 只做"确认+修差异"；异平台则空骨架起，靠 explore mode 的**导航图爬取**从零探索。
+3. **跑 explore mode**（`references/explore.md`）：逐入口 `droid screen` → 归纳 path 串 → `reback_run` 写盘（`status: unverified`，全程 `confirm_only` 不点提交）→ `derive_docs` 派生 → `lint_profile` 检查。一轮下来即得"能导航但未经交易验证"的画像。
+4. `tools/prereq_rules.yaml` 是**跨 app 的**（`applies_to.app: "*"`）→ 规则表直接复用；只补该 app 的 `prerequisites.yaml`（已知码/账户能力/标的属性）。
+5. 第一轮当 spike 跑、边跑边 `reback` 反哺，之后就快。
+6. 属性词表要一致：`prerequisites.yaml` 的 `known_codes[].attributes` 键必须与 `prereq_rules.yaml` 的 `requires.instrument` 键同一套（`market/product/has_nav/has_holding/collateral_eligible/financing_eligible/orderbook_depth/...`），否则 `needed_codes` 解析不出码（有 `tests/apps/test_prereq_integration.py` 守）。
 
 ---
 

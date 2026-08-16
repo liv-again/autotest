@@ -12,7 +12,7 @@ description: AI 驱动 Android App 用 Excel 用例做业务自测——用户�
 ## 加载顺序（生命周期，spec §六）
 
 1. **测前 · 设备匹配**：读 `apps/<app>/app.yaml`，用设备实际 package/version 匹配 `verified_versions`/`compatibility`；不在范围（未知包或版本越界）→ `revalidation_required`，**停止**，不静默套用旧画像。
-2. **测前 · 加载画像上下文**：读 `apps/<app>/profile.yaml`（机器权威）派生出的 `apps/<app>/画像.md`/`速览.md` 建立入口/能力/已验证链路上下文——**只加载相关的、早加载**，别现场摸索。
+2. **测前 · 加载画像上下文**：读 `apps/<app>/profile.yaml`（机器权威）派生出的 `apps/<app>/画像.md`/`速览.md` 建立入口/能力/已验证链路上下文——**只加载相关的、早加载**，别现场摸索。**画像缺失 / 大面积 unverified / 用例命中未收录入口 → 先走 explore mode（`references/explore.md`）把路径探索出来**：日常按需只探当次需要的（轨一），独立探索任务仅用于新 App 建画像与大版本重验证（轨二）。
 3. **测前 · 备前置**：跑 `tools/prereq_extract.py` 对本轮 Excel 出「本轮前置」，缺码/歧义高亮，让用户一次性补齐，别测中反复打断。
 4. **测前 · 冻结 selection**：按分档口径（见 `references/tiering.md`）默认只选 `high`，用户确认 `scope_hash` 后冻结，范围可审计。
 5. **测前 · 定 mode**：读 `apps/<app>/env.yaml` 走 `tools/safety/env_auth.verify_env`——**团队内自测默认走轻量档 `assurance_level: trusted_internal`**（已知模拟盘，声明即信任：未撤销 ∧ 是模拟盘 ∧ 测对 app/版本 → `simulated_submit`，**无需 HMAC 签名/署名/有效期**）；`operator_attested`/`technical_verified` 是**严格路径（休眠，供将来测真账户/生产）**，另需签名+真实署名+有效期。任一基础卫生不符或 `revoked:true` → **自动回退 `confirm_only`**。生成本轮安全约束（缺失/hash 不符 → 拒启下单）。
@@ -29,5 +29,6 @@ description: AI 驱动 Android App 用 Excel 用例做业务自测——用户�
 
 - `apps/<app>/画像.md`（功能支持矩阵 + 入口地图 + 已验证链路）、`前置条件.md`（已知码/账户能力）、`速览.md`（一页速查）——**均由 `tools/derive_docs.py` 从 `profile.yaml`/`prerequisites.yaml` 派生，勿手改**；要改先改 yaml 再重新派生。
 - 具体控件坐标/resource-id 会随交互与版本漂移，**别死记**——运行时用 `python tools/droid.py find "文字"` 现场取，入口地图只给"去哪找"，不代替 `find`。
-- 分档/坑清单/工作流细节见 `references/{workflow.md,tiering.md,pitfalls.md}`；交易安全权威见 `references/safety-policy.md`。
+- 分档/坑清单/工作流细节见 `references/{workflow.md,tiering.md,pitfalls.md}`；交易安全权威见 `references/safety-policy.md`；**路径半自动探索（换 App / 画像缺失 / 版本重验证）见 `references/explore.md`**。
 - **接入新自测需求（同 app/换 app）+ 对外分发（模板仓/skill/Maestro）见 `references/onboarding.md`。**
+- **新 App 骨架生成用 `tools/init_app.py`**（`--seed-from` 白标种子；不生成 env.yaml，认证永远人工），勿手写 profile.yaml。

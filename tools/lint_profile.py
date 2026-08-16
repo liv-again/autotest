@@ -12,12 +12,20 @@
 `today` 由调用方注入（YYYY-MM-DD），避免 Date.today() 类不确定性使 lint 不可复现。
 """
 import datetime
+import os
 import pathlib
+import sys
 
-import yaml
+# 作为脚本直接运行(python tools/lint_profile.py)时 sys.path[0] 是 tools/，
+# 注入仓根使 `import tools.*` 可用（与 prereq_extract.py 同模式）。
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
-from tools.derive_docs import derive
-from tools.reback import SECTION_ID_FIELD
+import yaml  # noqa: E402
+
+from tools.derive_docs import derive  # noqa: E402
+from tools.reback import SECTION_ID_FIELD  # noqa: E402
 
 STALE_DAYS = 30
 

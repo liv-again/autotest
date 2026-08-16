@@ -61,6 +61,9 @@ def scaffold_docs(slug, package, version, verified_at=None, aliases=None,
             "max_exclusive": compat_max_excl or DEFAULT_COMPAT_MAX_EXCL,
         },
         "test_accounts": [],
+        "environment": "env.yaml",
+        "profile": "profile.yaml",
+        "prerequisites": "prerequisites.yaml",
     }
     if aliases:
         app_doc["aliases"] = aliases

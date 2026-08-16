@@ -86,6 +86,9 @@ def test_scaffold_defaults():
     assert app["verified_versions"] == [{"version": "9.02.10", "verified_at": TODAY}]
     assert app["compatibility"] == {"min": "9.02.10", "max_exclusive": DEFAULT_COMPAT_MAX_EXCL}
     assert app["test_accounts"] == []  # 脱敏账户信息交人工补录
+    assert app["environment"] == "env.yaml"  # 显式引用（与 guojin 风格一致）
+    assert app["profile"] == "profile.yaml"
+    assert app["prerequisites"] == "prerequisites.yaml"
     assert docs["profile.yaml"]["entries"] == []
     assert docs["profile.yaml"]["capabilities"] == []
     assert docs["prerequisites.yaml"]["known_codes"] == []

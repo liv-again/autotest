@@ -11,7 +11,8 @@
   python droid.py type "512000"            # 输入文本（需先聚焦输入框）
   python droid.py key BACK|HOME|ENTER|DEL  # 按键
   python droid.py swipe 630 2000 630 800 300   # 滑动(默认300ms)
-  python droid.py shot [out.png]           # 尽力截图(FLAG_SECURE会得到0字节)
+   python droid.py shot [out.png]           # 尽力截图(FLAG_SECURE会得到0字节)
+   python droid.py wait-device              # 探测设备:30s间隔×最多3次,未连接退出码1(停止任务)
 
 设计要点：不依赖第三方库；adb 通过 subprocess 参数列表调用，避免 Git Bash 路径改写。
 """
@@ -25,6 +26,29 @@ def adb(*args, binary=False, timeout=60):
     if binary:
         return r.returncode, r.stdout, r.stderr.decode("utf-8", "replace")
     return r.returncode, r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace")
+
+def wait_device(tries=3, interval=30):
+    """探测 adb 设备：最多 tries 次、每次间隔 interval 秒。
+    发现 state=device 的设备返回 0；全部未发现返回 1（供"3次失败即停止任务"用）。"""
+    import time
+    for i in range(tries):
+        _, out, _ = adb("devices")
+        online = []
+        for ln in out.splitlines():
+            if "List of devices" in ln or "\t" not in ln:
+                continue
+            serial, state = ln.split("\t", 1)
+            if state.strip() == "device":
+                online.append(serial.strip())
+        if online:
+            print(f"设备已连接: {online[0]}（第{i+1}/{tries}次探测）")
+            return 0
+        print(f"第{i+1}/{tries}次探测未发现设备")
+        if i < tries - 1:
+            print(f"  {interval}s 后重试...")
+            time.sleep(interval)
+    print(f"已探测 {tries} 次均未连接设备，停止任务")
+    return 1
 
 def current():
     _, out, _ = adb("shell", "dumpsys", "activity", "activities")
@@ -128,6 +152,7 @@ def main():
         except Exception:
             pass
     if cmd == "current": print(current())
+    elif cmd == "wait-device": sys.exit(wait_device())
     elif cmd in ("screen","dump"): screen()
     elif cmd == "has": sys.exit(has(sys.argv[2:]))
     elif cmd == "find": find(sys.argv[2])

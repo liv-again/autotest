@@ -1,0 +1,59 @@
+#!/usr/bin/env python
+"""git pre-commit 护栏：检查暂存区，拦截 .secrets/(除白名单)、snapshots/、*.private.png 入仓。
+
+框架无关：任何 agent / 人通过 `git commit` 都会触发（配合 `core.hooksPath=.githooks`）。
+与 Claude Code PreToolUse hook（.claude/hooks/guard_git_add.py）互补：
+- PreToolUse 在命令层拦 `git add .`/-A/--all 与敏感路径的 add；
+- 本 pre-commit 在提交层兜底，拦截任何方式（含 `git add -f`、历史已跟踪文件）进入暂存区的敏感路径。
+
+敏感路径正则单一真源 = .claude/hooks/guard_git_add.py 的 _SECRET_PAT/_SECRET_ALLOW_PAT（与 .gitignore 对齐，勿另复制一套）。
+"""
+import os
+import subprocess
+import sys
+
+_THIS = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_THIS)  # .githooks 的上一级 = 仓根
+_HOOK_DIR = os.path.join(_ROOT, ".claude", "hooks")
+sys.path.insert(0, _HOOK_DIR)
+
+from guard_git_add import _SECRET_PAT, _SECRET_ALLOW_PAT  # noqa: E402
+
+
+def staged_files():
+    """返回暂存文件列表（相对仓根、正斜杠）。拿不到时返回 None（fail-closed）。"""
+    out = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "-z"],
+        capture_output=True,
+        cwd=_ROOT,
+    )
+    if out.returncode != 0:
+        return None
+    return [f for f in out.stdout.decode("utf-8", "replace").split("\0") if f]
+
+
+def main():
+    files = staged_files()
+    if files is None:
+        print("pre-commit 护栏: 无法读取暂存文件列表，fail-closed 阻止提交。", file=sys.stderr)
+        return 1
+
+    blocked = []
+    for f in files:
+        fn = f.replace("\\", "/")
+        if _SECRET_ALLOW_PAT.search(fn):
+            continue  # 白名单例外：.secrets/README.md 与 .secrets/*.example
+        if _SECRET_PAT.search(fn):
+            blocked.append(f)
+
+    if blocked:
+        print("pre-commit 护栏: 以下敏感/私密路径不得入仓（与 .gitignore / guard_git_add 一致）：", file=sys.stderr)
+        for f in blocked:
+            print("  - %s" % f, file=sys.stderr)
+        print("仅 .secrets/README.md 与 *.example 例外。请移除暂存后重试。", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

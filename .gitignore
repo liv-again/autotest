@@ -6,3 +6,6 @@ runs/**/snapshots/
 __pycache__/
 *.pyc
 草稿.md
+
+# OpenCode 软链目录（junction 指向本机 .claude/skills 的绝对路径，不入仓，各机器自行重建软链）
+.opencode/skills/

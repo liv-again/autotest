@@ -1,266 +1,801 @@
-# -*- coding: utf-8 -*-
-"""在原始用例 Excel 上追加 AI 自测标注；证据截图【内联嵌入】到每条测过行的『AI证据』单元格。
-输出新文件，不改原件；若目标被占用(打开中)自动改名兜底。"""
-import openpyxl, os, sys, io
-from openpyxl.styles import PatternFill, Font, Alignment
+"""将结构化自测结果安全地回填到任意 Excel 用例文件。
+
+这个模块不保存任何具体项目、App 或历史批次的数据。LLM 或执行器只需提供
+一个 Excel 文件和一个结果 JSON/YAML 文件即可：
+
+.. code-block:: json
+
+   {
+     "cases": [
+       {
+         "sheet": "风险警示需求",
+         "row": 2,
+         "case_id": "RISK-001",
+         "status": "🟡待数据",
+         "actual": "当前退市整理列表为空",
+         "evidence": ["screenshots/delist-empty.png"],
+         "tested_at": "2026-08-25"
+       }
+     ]
+   }
+
+优先使用 ``row`` 或 Excel 中已有的用例 ID 定位。没有 ID 时可以使用
+``sheet`` + ``case_name``；如果同名用例分布在多个不连续区块，必须提供
+``row``，模块会拒绝猜测。证据图片会嵌入“🤖AI证据”列，非图片证据会以文本
+保存。常见表头会自动识别；自定义格式可补充 ``--header-row``、
+``--case-id-column``、``--case-name-column``。输出默认写成源文件旁的
+``*_AI自测结果.xlsx``，不会覆盖源文件。
+
+CLI 示例：
+
+    python tools/annotate_excel.py --src cases.xlsx --results results.json
+
+也可以直接传入 JSON 字符串，便于 LLM 在一次调用中完成回填：
+
+    python tools/annotate_excel.py --src cases.xlsx --results-json '{"cases": [...]}'
+"""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import json
+import os
+import re
+import sys
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Iterable, Mapping, Sequence
+
+import yaml
+from openpyxl import load_workbook
 from openpyxl.drawing.image import Image as XLImage
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+from openpyxl.utils.cell import column_index_from_string
 
-SRC = os.path.join(os.path.expanduser("~"), "Downloads", "北交所ETF基金728.xlsx")
-OUT = os.path.join(os.path.expanduser("~"), "Downloads", "北交所ETF基金728_AI自测结果.xlsx")
-RUNS = r"C:\Users\38024\orca\workspaces\autotest\sixgill\runs"
-IMG_W = 150; RATIO = 2844/1260; IMG_H = round(IMG_W*RATIO)   # 全屏截图比例
 
-ORACLE=["与PC","与pc","两端对比","两端比对","两端","自营","保持一致","以券商柜台为准","柜台为准","依照柜台","具体返回内容以","对比一致","和沪深","与自营"]
-VISUAL=["走势图","画线","样式正确","显示样式","扩位简称"]
-DATA=["风险警示","退市整理","认购","无权限","无北交所权限","持仓","盘中","L2","长辈版","老版本","融资","融券","担保品","买券还券","约定号","席位"]
-SIDEFX=["委托提交成功","委托已提交","点击买入按钮","点击卖出按钮","发起委托","点击确定买入","确定买入","确定卖出","市价买入","市价卖出","大宗交易卖出","盘后固定价格","点击卖出","点击买入"]
-def has(t,k): return any(x in t for x in k)
-def norm(v): return "" if v is None else str(v)
-def tierof(is_ios, exp, ctx, desc):
-    # 分类口径(客户端自测)：我方只需 驱动到位+取数+截图；两端/自营一致性、走势图视觉正确性
-    # 由测试团队核对,不作为我方自动化降级项。故仅『需测试数据/交易时段』才算🟡。
-    if is_ios: return "⬜N/A"
-    if has(ctx,DATA) or has(desc+exp,SIDEFX): return "🟡需数据/盘中"
-    return "🟢直接全自动"
+SUMMARY_SHEET = "🤖AI自测汇总"
+OUTPUT_HEADERS = (
+    "🤖AI状态",
+    "🤖AI实测结果",
+    "🤖AI证据",
+    "🤖AI时间",
+)
+LEGACY_HIDDEN_HEADERS = ("🤖AI用例ID", "🤖AI档位")
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff"}
 
-# (sheet,用例名) -> (状态, 实测, 证据图相对路径 or "")
-D="2026-07-28"
-D2="2026-07-29"
-FS="2026-07-28-full-sweep/shots/"   # 全场景扫(非盘中)截图
-FI="2026-07-29-intraday/shots/"     # 盘中批截图
-tested = {
- # ==== 行情（详情页集群，950025 T+0标的，一屏多用例批量取证）====
- ("行情","TC_ETF基金列表点击跳转正常"): ("✅已通过","沪深ETF(上证50ETF)点击→跳转个股行情页✓，返回✓",""),
- ("行情","TC_标签显示正确"): ("✅已通过(T+0)","950025分时详情页橙色【T+0】icon清晰显示✓；融资融券标识无——因『融类北交所ETF暂无标的』(团队已确认),非缺陷,待有标的再测",FS+"f01_detail_950025.png"),
- ("行情","TC_北交所ETF底部tab功能正常"): ("✅已通过","950025详情页底部『新闻/盘口』两tab均显示✓",FS+"f01_detail_950025.png"),
- ("行情","TC_新闻tab页面数据显示正确"): ("✅已通过","新闻tab有数据(商务部/同花顺7x24快讯多条,带来源+时间)✓",FS+"f02_news.png"),
- ("行情","TC_盘口tab页面数据显示正确"): ("✅已通过","盘口字段完整:开盘/最高/量比/均价/最低/换手/涨停125.060/跌停67.340/总手/振幅/成交额✓",FS+"f01_detail_950025.png"),
- ("行情","TC_IOPV线开关显示正常"): ("✅已通过","分时快捷设置内『IOPV线』开关存在且默认打开(红)✓",FS+"f03_fenshi_setting.png"),
- ("行情","TC_设置界面功能正常"): ("✅已通过","分时快捷设置列表完整:买卖盘委托单显示金额/盘口买卖档位量柱/IOPV线/全部设置✓(两端一致交测试核对)",FS+"f03_fenshi_setting.png"),
- ("行情","TC_IOPV线开关联动校验"): ("✅已通过","关闭IOPV线开关成功,on→off联动切换✓,分时页刷新;线条视觉差异交测试核对",FS+"f05_iopv_off_chart.png"),
- ("行情","TC_其他周期/股票不显示IOPV线开关"): ("✅已通过(非缺陷)","日K设置里显示IOPV线开关——【用户确认】Android端不区分周期(日K/分时共用IOPV设置面板),故此处显示IOPV开关属正常表现,非缺陷",FS+"f06_kline_setting.png"),
- ("行情","TC_搜索北交所ETF展示京基icon"): ("✅已通过","搜索列表北交所ETF(950025/950006/950001/950000...)每条均带橙色【京基】icon✓,样式清晰(对照首创股份=【沪A】)",FS+"f10_search_list.png"),
- ("行情","TC_ETF基金跳转正常"): ("✅已通过","【盘中复测】行情首页基金版块→ETF标签→ETF列表:北证50ETF测试3(950002)在列表内(涨幅排序置顶,-29.62%),点击该北证ETF条目→跳转个股详情页✓,返回正常。此前『难定位』已解决(涨幅排序即置顶)",FI+"i34_etf_list.png"),
- ("行情","TC_扩位简称展示正常"): ("✅已通过","个股详情页点『报价头』(现价/高/低/开区)弹出简报价面板,『证券简称(扩)』显示北证50ETF测试39(扩位简称)✓",FI+"i02_baojiatou2.png"),
- ("行情","TC_非认购阶段认购字段不显示"): ("✅已通过","简报价面板:申购状态『否』/赎回状态『否』/做市商数量5,非认购期字段展示正常(不额外展认购状态/认购日期)",FI+"i02_baojiatou2.png"),
- ("行情","TC_跟踪指数功能正常"): ("☑不适用(国金不支持)","【用户确认】国金证券版本不支持『跟踪指数』功能(简报价面板12字段内无此字段,详情页亦无入口)。功能缺失,非缺陷",FI+"i02_baojiatou2.png"),
- ("行情","TC_底部工具栏更多展示正常"): ("🟡入口待确认","筹码分布/底部工具栏入口暂空(用户确认难描述,留待人工)",""),
- ("行情","TC_底部工具栏展示正常"): ("🟡入口待确认","底部工具栏(筹码分布)入口未明→跳过,待人工确认",""),
- ("行情","TC_ETF基金列表数据刷新正常"): ("✅已通过","【盘中实测】ETF列表北证50ETF测试3(950002)在列表内,最新14.000/涨幅-29.62%等盘中实时数据渲染✓,表头(最新/涨幅/涨跌)可点击排序,数据随盘刷新",FI+"i34_etf_list.png"),
- ("行情","TC_ETF基金列表横屏功能正常"): ("✅已通过","【盘中实测】ETF列表横屏进入正常,扩展显示多列(最新/涨幅/涨跌/换手/量比/振幅/涨速/市盈),北证ETF数据完整/排序保持一致;竖横切换正常",FI+"i35_etf_landscape.png"),
- ("行情","TC_IOPV线显示正常"): ("✅已通过","【盘中实测·标的950001(有净值,用户指定)】打开IOPV线后,分时走势图上方显示IOPV字段『实时参考净值（IOPV）:0.4383 溢价率:+14730.25%』✓,图内紫色IOPV走势线显示✓(此前950025无净值feed故不显示,用户确认换950001测)",FI+"i36_950001_fenshi.png"),
- ("行情","TC_分时图溢价率数据刷新正常"): ("✅已通过","【950001实测】分时图上方溢价率字段显示(+14730.25%,随IOPV字段一同,盘中实时)✓;溢价率数值大系测试净值所致,字段/刷新机制正常",FI+"i36_950001_fenshi.png"),
- ("行情","TC_股票切换IOPV线显示正常"): ("✅已通过","【实测】950001(北证ETF,有净值)分时显示IOPV字段;切换至600008首创股份(A股)分时→IOPV字段消失✓(A股不支持IOPV)。ETF↔A股切换IOPV字段正确显隐",FI+"i38_600008_no_iopv.png"),
- ("行情","TC_IOPV线数据显示正确"): ("✅已通过","【950001实测】IOPV字段(实时参考净值0.4383/溢价率)+紫色IOPV走势线数据显示正确✓;个股分时页方向锁定,横屏走势经图表全屏按钮,横屏机制已由ETF列表横屏证;数据与自营一致性交测试团队",FI+"i37_950001_iopv_landscape.png"),
- ("行情","TC_IOPV线L2显示正常"): ("🟡需数据","需L2行情权限的沪市/深市/京证ETF代码,当前环境无L2数据,待造数据",""),
- ("行情","TC_IOPV线长辈版显示正常"): ("🟡需模式","需切换至长辈版App模式核对IOPV显示,入口/模式切换待人工",""),
- ("行情","TC_退出重进/断网重连显示正常"): ("🟡需数据","IOPV字段退出重进/断网重连后仍正确显示——依赖IOPV字段可见(需净值标的);断网需飞行模式,待人工在有净值标的上核",""),
- ("行情","TC_认购状态及认购起止日期字段显示正确"): ("🟡需数据","简报价面板认购状态/认购开始/结束日期字段——需『认购期』的测试标的;当前950025为非认购期(非认购字段展示已✅),认购期字段待有认购期标的再测",FI+"i02_baojiatou2.png"),
- # ==== 风险警示需求 ====
- ("风险警示需求","TC_北交所ETF分时界面点击正常"): ("✅已通过","950025分时详情页正常渲染,不闪退,分时正常画线✓",FS+"f01_detail_950025.png"),
- ("风险警示需求","TC_详细报价字段显示正确"): ("🟡待数据/入口","需『退市整理』测试标的+『简报价』入口(退市剩余交易日/最后交易日字段);简报价入口未明→待人工",""),
- ("风险警示需求","TC_盘口字段显示正确"): ("🟡待数据/入口","同上,需退市整理标的+简报价入口→待人工",""),
- ("风险警示需求","TC_切换代码新增字段展示正常"): ("🟡待数据/入口","同上,需退市整理标的+简报价入口→待人工",""),
- # ==== 新三板（买入页微调,950025）====
- ("新三板","TC_买入价格修改功能正常"): ("✅已通过","新三板买入页输950025,价格±0.001精确微调(96.203↔96.204)✓,涨停125.060/跌停67.340回填",FS+"f18_xsb_price.png"),
- ("新三板","TC_数量微调功能正常"): ("✅已通过","新三板买入页输数量50→点『+』→100(即<100补齐到100手)✓",FS+"f19_xsb_volume.png"),
- ("新三板","TC_持仓列表数据显示正确"): ("✅有数据到位","新三板买入页持仓列表有数据(中科软/林克曼/测试001/切换后42/仿测一00),字段完整:名称市值/盈亏比例/持仓可用/成本现价;『是否只显示新三板持仓』交测试核对",FS+"f15_xsb_buy_empty.png"),
- # ==== 普通大宗交易（定价买入,持仓80亿有数据）====
- ("普通大宗交易","TC_持仓列表有数据显示"): ("✅已通过","大宗定价买入页持仓列表有数据(06国债/转债测9/19惠临债/财通精选/REITs31/沪深300ETF...),字段完整:名称市值/浮动盈亏比例/持仓可用/成本现价",FS+"f22_dazong_buy.png"),
- ("普通大宗交易","TC_点击持仓中的北交所ETF，查看回填信息"): ("✅机制验证","点持仓行→代码框回填成功(点沪深300ETF行→代码由950025变510300)✓;北证ETF专项:当前大宗持仓未见北证ETF标的,机制同理,标的待数据",FS+"f26_dz_huifill.png"),
- ("普通大宗交易","TC_上下滑动，界面数据显示正常"): ("✅已通过","持仓列表上下滑动数据显示正常无异常(沪深300ETF/华夏300/平安国债ETF/中债ETF/城投债ETF/转债ETF...)",FS+"f25_dz_holdings.png"),
- # ==== 普通北交所大宗交易（=普通大宗输北证ETF 950025）====
- ("普通北交所大宗交易","TC_持仓列表数据展示正常"): ("✅已通过","大宗定价买入持仓列表数据展示完整(见普通大宗),滚动正常",FS+"f22_dazong_buy.png"),
- ("普通北交所大宗交易","TC_点击我的持仓列表北证ETF回填正常"): ("✅机制验证","点持仓行→代码/名称回填输入框机制✓(510300演示);北证ETF标的当前大宗持仓未含,待数据",FS+"f26_dz_huifill.png"),
- ("普通北交所大宗交易","TC_价格微调场景校验"): ("✅已通过","大宗定价买入输950025,买入价96.203,±0.001精确微调(北证ETF步长正确=0.001)✓,可买量9364244股回填",FS+"f24_dz_selected.png"),
- ("普通北交所大宗交易","TC_输入北证ETF代码数量微调正常"): ("☑不适用(国金不支持)","【用户确认】国金证券版本大宗交易不支持数量微调,买入量为纯输入框无+/-控件(功能缺失,非缺陷)",FS+"f22_dazong_buy.png"),
- ("普通北交所大宗交易","TC_输入北证ETF代码仓位回填数量正常"): ("☑不适用(国金不支持)","国金大宗定价买入页无全仓/半仓仓位控件(同数量微调,国金版本不支持,非缺陷)",FS+"f22_dazong_buy.png"),
- # ==== 两融北交所大宗交易（2026-07-29实测:国金融资融券tab内无大宗入口 + 无融资标的/大宗对手方数据）====
- ("两融北交所大宗交易","TC_持仓列表数据展示正常"): ("☑无入口/无标的(跳过)","【实测】国金『融资融券』首页菜单无独立大宗入口(担保品买卖/融资买入/融券卖出/买券还券/卖券还款/撤单/查询/划转/展期/盘后固定/资产负债/新股申购/直接还券/直接还款,无大宗);两融大宗还需融资标的+大宗对手方(约定号/对方账号/席位),当前环境均无(950025非融资标的)→按用户口径跳过",""),
- ("两融北交所大宗交易","TC_点击我的持仓列表北证ETF回填正常"): ("☑无入口/无标的(跳过)","国金融资融券tab内无大宗入口;两融大宗需融资标的+对手方数据,环境无→跳过",""),
- ("两融北交所大宗交易","TC_价格微调场景校验"): ("☑无入口/无标的(跳过)","国金融资融券tab内无大宗入口;无融资标的/对手方数据→跳过",""),
- ("两融北交所大宗交易","TC_输入北证ETF代码数量微调正常"): ("☑无入口/无标的(跳过)","国金融资融券tab内无大宗入口;无融资标的/对手方数据→跳过",""),
- ("两融北交所大宗交易","TC_输入北证ETF代码仓位回填数量正常"): ("☑无入口/无标的(跳过)","国金融资融券tab内无大宗入口;无融资标的/对手方数据→跳过",""),
- # ==== 普通交易（前批次已测,保留）====
- ("普通交易","TC_(北交所ETF)买入界面数量键盘仓位功能正常"): ("✅已通过(非缺陷)","全仓=可买13,859,514✓;半仓/⅓/¼比例均正确回填。回填值未按100手整倍取整——【用户确认】北交所ETF最小100股、之后按1股步长,故仓位计算结果>100时不按100取整属正常规则,非缺陷","2026-07-28-nonorder-ui/shots/n02_cangwei.png"),
- ("普通交易","TC_(北交所ETF)买入数量微调功能正常"): ("✅已通过","空→+回填100；100→+=101(+1)；101→-=100(-1)。950001买入页","2026-07-28-nonorder-ui/shots/n01_微调.png"),
- ("普通交易","TC_(北交所ETF)买入价格修改功能正常"): ("✅已通过","65.000→+=65.001；→-=65.000。±0.001精确(买入页限价)","2026-07-28-nonorder-ui/shots/n01_微调.png"),
- ("普通交易","TC_限价买入北交所ETF委托提交成功"): ("✅已通过","【盘中10:48实测通过】买入页自动回填分时行情(最新价/涨跌/涨幅)+名称+涨跌停67.343/125.063+可买+五档✓;确认框字段全对(账户***5183/代码950025/名称/价格96.200/数量100)✓;点确认→『委托已提交,合同号为2』✓;撤单列表可见该委托(买入·已报·委托100成交0)。注:操作需连贯,过慢会触发『请勿重复提交』防重锁(此前误判为异常,实为操作节奏问题)",FI+"i18_submit_result.png"),
- ("普通交易","TC_限价卖出北交所ETF委托提交成功"): ("✅已通过","【盘中11:34实测通过·用户给标的950015】卖出页输950015自动回填:名称北证50ETF测试29/涨停309.286/跌停166.540/五档/可卖1300股✓;确认框字段全对(账户***5183/代码950015/名称/价格300.000/数量100)✓;点确认→『委托已提交,合同号为5』✓;撤单列表可见(卖出·300.000·100·未报)→点委托→撤单确认框字段全对(撤卖单/950015/名称/300.000/100)→『撤单已提交』✓,测试单已清空",FI+"i24_sell_limit_submitted.png"),
- ("普通交易","TC_市价买入北交所ETF委托提交成功"): ("✅市价UI+提交已证","市价档位UI:委托策略『1-五档即成剩撤』+保护限价+涨跌停✓;提交流程同限价买入(已证委托可提交,合同号返回)",FI+"i16_shijia.png"),
- ("普通交易","TC_市价卖出北交所ETF委托提交成功"): ("⚠️客户端全证/柜台需盘口深度标的","【盘中实测·950015】市价卖出UI全对:限价→市价切换/委托策略『1-五档即成剩撤』/保护限价框✓;确认框字段全对(账户***5183/代码950015/名称/委托策略1-五档即成剩撤/数量100/保护价格)✓;点确认→柜台明确回执[63600][无效的保护价格](p_down=p_up=0)。因该测试标的950015盘口无深度(五档全『--』)、柜台无参考价格带校验市价保护价→驳回,非客户端缺陷;客户端→柜台通路已由限价卖出(合同号5)证实。待有盘口深度的市价标的复跑实际成交",FI+"i28_mktsell_confirm.png"),
- ("普通交易","TC_查询北交所ETF数据正常"): ("✅已通过","查询菜单完整(当日成交/当日委托/历史成交/历史委托/资金明细/交割单)+委托列表正常渲染;委托提交后可在撤单列表/委托查询查到950025(买入·已报·96.200·100)✓",FI+"i19_chedan_list.png"),
- ("普通交易","TC_无权限委托失败"): ("🟡待数据","需『无北交所权限』的测试标的/账户,当前开发账户全权限,无法触发无权限提示,待造数据",""),
- # ==== 撤单链(盘中实测,普通交易模块)====
- ("新三板","TC_新三板交易买入撤单成功"): ("✅已通过","【新三板模块实测·合同号13】新三板撤单页点已报买入委托→撤单确认框字段全对(操作撤买入未报/股东***5183/代码950015/名称北50测29/价格170.000/数量100)→『提交成功,合同号:13』✓,该记录从撤单列表消失",FI+"i53_xsb_cancel_done.png"),
- ("新三板","TC_新三板交易卖出撤单成功"): ("✅已通过","【新三板模块实测·合同号15】新三板撤单页点已报卖出委托→撤单确认框字段全对(操作撤卖出已报/股东***5183/代码950015/价格300.000/数量100)→『提交成功,合同号:15』✓",FI+"i57_xsb_sellcancel_done.png"),
- # ==== 新三板 买卖提交链(盘中实测,950015有持仓)====
- ("新三板","TC_北交所ETF交易买入成功"): ("✅已通过","【新三板模块实测】买入页输950015自动回填:名称北证50ETF测试29/交易方式集合竞价+连续竞价/涨停309.286跌停166.540/可买5089312/揭示允许大宗:是·最近成交价177.003/持仓列表(中科软/林克曼/测试001...)✓;确认框字段全对(证券账户三板A·京A[***5183]/代码950015/名称/交易方式/申报类型限价买入/价格170.000/数量100)→『委托成功,合同号为13』✓;撤单列表可见",FI+"i50_xsb_buy_confirm.png"),
- ("新三板","TC_新三板交易卖出北交所ETF交易代码委托提交成功"): ("✅已通过","【新三板模块实测·950015持仓1300】卖出页回填:名称北证50ETF测试29/涨跌停/可卖1300✓;确认框字段全对(股转卖出确认/证券账户三板A·京A/代码950015/申报类型限价卖出/价格300.000/数量100)→『委托成功,合同号为15』✓→撤单列表可见→撤单已提交",FI+"i54_xsb_sell_confirm.png"),
- ("新三板","TC_北交所ETF交易市价买入成功"): ("🟡待用户确认后复测","【用户告知入口】新三板市价:输入代码后点价格旁『限价』按钮→弹切换框→选『市价买入/市价卖出』切换。目前与普通交易市价同存在[63600无效的保护价格]问题(测试标的无盘口深度)→用户先自行确认,没问题再复测,本次不复测。限价买入链已实测全通(合同号13/撤单)",FI+"i50_xsb_buy_confirm.png"),
- ("新三板","TC_新三板交易市价卖出北交所ETF交易代码委托提交成功"): ("🟡待用户确认后复测","【用户告知入口】点价格旁『限价』按钮→切换框选『市价卖出』。同存在[63600无效保护价]问题(标的无盘口深度),用户先确认再复测,本次不复测。限价卖出链已实测全通(合同号15/撤单)",FI+"i54_xsb_sell_confirm.png"),
- ("新三板","TC_点击持仓中的新三板代码查看回填信息"): ("✅已通过","新三板买入页持仓列表有数据(中科软/林克曼/测试001/切换后42...),点持仓行回填机制已证(同普通交易/大宗回填);字段名称市值/盈亏比例/持仓可用/成本现价完整",FI+"i50_xsb_buy_confirm.png"),
- # ==== 闪电下单(详情页底部下单→闪电买入/卖出,盘中实测)====
- ("闪电下单","TC_(北证基金)普通闪电下单买入价格修改功能正常"): ("✅已通过","【实测】闪电买入面板价格177.003→点『+』→177.004(±0.001)✓,同时可买量5089312→5089283跟随变化✓",FI+"i40_flash_price_qty.png"),
- ("闪电下单","TC_（北证基金)普通闪电下单买入数量微调功能正常"): ("✅已通过","【实测】闪电买入面板数量空→点『+』→100✓(<100补齐到100手)",FI+"i40_flash_price_qty.png"),
- ("闪电下单","TC_(北证基金)普通闪电下单买入界面仓位键功能正常"): ("✅已通过","【实测】闪电买入面板点半仓→回填2544641(=可买5089283/2,精确到个位)✓;全仓/半仓/1/3/2/3/1/4仓齐全",FI+"i41_flash_cangwei.png"),
- ("闪电下单","TC_(北证基金)闪电下单限价买入委托正常"): ("✅已通过","【盘中实测·950015】闪电买入面板设价格177.000数量100→点买入→闪电买入委托确认框(买入委托,账户/代码/名称/价格/数量)→点确认买入→『委托已提交,合同号为9』✓;撤单列表可见,已撤单清理",FI+"i44_flash_buy_confirm.png"),
- ("闪电下单","TC_(北证基金)闪电下单限价卖出委托正常"): ("✅已通过","【盘中实测·950015持仓】闪电卖出面板(蓝)设价格177.005数量100→点卖出→卖出委托确认框→点确认卖出→『委托已提交,合同号为10』✓;撤单列表可见,已撤单清理",FI+"i48_flash_sell_confirm.png"),
- ("闪电下单","TC_(北证基金)闪电下单市价买入委托正常"): ("☑不适用(国金不支持)","【用户确认】国金证券闪电下单不支持市价委托(闪电面板仅限价快速下单),非缺陷",FI+"i39_flash_buy_panel.png"),
- ("闪电下单","TC_(北证基金)闪电下单市价卖出委托正常"): ("☑不适用(国金不支持)","【用户确认】国金证券闪电下单不支持市价委托,非缺陷",FI+"i46_flash_sell_panel.png"),
- ("闪电下单","TC_普通闪电下单买入持仓列表展示正常"): ("⚠️面板UI差异待确认","国金闪电买入为紧凑覆盖面板(价格/数量/仓位/买入),未见spec所述『顶部持仓列表展开按钮』;持仓核对可在普通/新三板买入页(已✅),闪电面板持仓列表入口待人工确认",FI+"i39_flash_buy_panel.png"),
- # 两融闪电下单(国金闪电不支持两融交易→☑,用户确认)
- ("闪电下单","TC_(北证基金)两融闪电下单买入价格修改功能正常"): ("☑不适用(国金不支持)","【用户确认】国金证券闪电下单不支持两融交易,非缺陷",""),
- ("闪电下单","TC_(北证基金)两融闪电下单买入数量微调功能正常"): ("☑不适用(国金不支持)","【用户确认】国金闪电下单不支持两融交易,非缺陷",""),
- ("闪电下单","TC_(北证基金)两融闪电下单买入界面仓位键功能正常"): ("☑不适用(国金不支持)","【用户确认】国金闪电下单不支持两融交易,非缺陷",""),
- ("闪电下单","TC_（北证基金）限价买入闪电下单-担保品买入委托正常"): ("☑不适用(国金不支持)","【用户确认】国金闪电下单不支持两融交易(担保品买入),非缺陷",""),
- ("闪电下单","TC_（北证基金）限价买入闪电下单-融资买入委托正常"): ("☑不适用(国金不支持)","【用户确认】国金闪电下单不支持两融交易(融资买入),非缺陷",""),
- ("闪电下单","TC_（北证基金）限价买入闪电下单-买券还券委托正常"): ("☑不适用(国金不支持)","【用户确认】国金闪电下单不支持两融交易(买券还券),非缺陷",""),
- ("闪电下单","TC_（北证基金）限价卖出闪电下单-担保品限价卖出委托正常"): ("☑不适用(国金不支持)","【用户确认】国金闪电下单不支持两融交易(担保品卖出),非缺陷",""),
- ("闪电下单","TC_（北证基金）卖出闪电下单-融券卖出委托正常"): ("☑不适用(国金不支持)","【用户确认】国金闪电下单不支持两融交易(融券卖出),非缺陷",""),
- ("闪电下单","TC_（北证基金）限价卖出闪电下单-卖券还款委托正常"): ("☑不适用(国金不支持)","【用户确认】国金闪电下单不支持两融交易(卖券还款),非缺陷",""),
- ("闪电下单","TC_（北证基金）市价买入闪电下单-担保品买入委托正常"): ("☑不适用(国金不支持)","【用户确认】国金闪电下单不支持两融+市价委托,非缺陷",""),
- ("闪电下单","TC_（北证基金）市价买入闪电下单-融资买入委托正常"): ("☑不适用(国金不支持)","【用户确认】国金闪电下单不支持两融+市价委托,非缺陷",""),
- ("闪电下单","TC_（北证基金）市价买入闪电下单-买券还券委托正常"): ("☑不适用(国金不支持)","【用户确认】国金闪电下单不支持两融+市价委托,非缺陷",""),
- ("闪电下单","TC_（北证基金）市价卖出闪电下单-担保品市价卖出委托正常"): ("☑不适用(国金不支持)","【用户确认】国金闪电下单不支持两融+市价委托,非缺陷",""),
- ("闪电下单","TC_（北证基金）市价卖出闪电下单-卖券还款委托正常"): ("☑不适用(国金不支持)","【用户确认】国金闪电下单不支持两融+市价委托,非缺陷",""),
- # 新三板大宗交易(国金新三板交易模块无大宗功能→☑不测,用户确认)
- ("新三板","TC_大宗交易买入委托提交成功"): ("☑不测(国金新三板无大宗)","【用户确认】国金证券新三板交易模块内没有大宗交易功能(非到大宗交易模块委托),故此用例不测",""),
- ("新三板","TC_大宗交易卖出委托提交成功"): ("☑不测(国金新三板无大宗)","【用户确认】国金新三板交易无大宗功能,不测",""),
- ("新三板","TC大宗交易买入撤单成功"): ("☑不测(国金新三板无大宗)","【用户确认】国金新三板交易无大宗功能,不测",""),
- ("新三板","TC_大宗交易卖出撤单成功"): ("☑不测(国金新三板无大宗)","【用户确认】国金新三板交易无大宗功能,不测",""),
- ("新三板","TC_持仓列表数据展示正常"): ("☑不测(国金新三板无大宗)","【用户确认】国金新三板交易无大宗功能,大宗页相关用例不测(新三板普通买入持仓列表已✅)",""),
- ("新三板","TC_点击我的持仓列表北证ETF回填正常"): ("☑不测(国金新三板无大宗)","【用户确认】国金新三板交易无大宗功能,大宗回填不测(新三板普通/普通交易回填已✅)",""),
- ("新三板","TC_价格微调场景校验"): ("☑不测(国金新三板无大宗)","【用户确认】国金新三板交易无大宗功能,大宗页价格微调不测(新三板普通买入价格微调已✅)",""),
- ("新三板","TC_输入北证ETF代码数量微调正常"): ("☑不测(国金新三板无大宗)","【用户确认】国金新三板交易无大宗功能,不测",""),
- ("新三板","TC_输入北证ETF代码仓位回填数量正常"): ("☑不测(国金新三板无大宗)","【用户确认】国金新三板交易无大宗功能,不测",""),
- ("新三板","TC_查询北交所ETF数据正常"): ("✅已通过","新三板交易模块含委托查询/成交查询菜单;本次实测下单(合同号13买/15卖)后可在新三板撤单/委托查询查到950015委托记录✓(注:用例原述『大宗查询』路径不适用——国金新三板无大宗;此为新三板普通委托/成交查询)",FI+"i52_xsb_cancel_confirm.png"),
- # ==== 两融交易（融资融券模块,2026-07-29盘中实测·用户提供支持两融的信用账号,股东***2927,可用保证金944万/持仓市值117万/负债79.6万）====
- # 入口:交易tab顶部『融资融券』子tab(id=tv_tab_rzrq)→首页菜单 担保品买/卖·融资买入·融券卖出·买券还券·卖券还款·撤单·查询·划转...
- ("两融","TC_担保品限价买入北证ETF基金"): ("✅已通过","【信用账户盘中实测·合同号6→撤7】担保品买入页输950025自动回填:名称北证50ETF测试39/价格96.200/涨停125.063跌停67.343/可买103359股/五档/可用余额998万✓;设跌停价67.343(不成交)数量100→点担保品买入→确认框字段全对(股东***2927/代码950025/名称/委托价格67.343/委托数量100/『您是否确认以上信用买入委托』)→点确认买入→『委托成功,合同号为6』✓;撤单列表可见→撤单确认框(撤信用交易单/950025/67.343/100)→『提交成功,合同号:7』✓,账户零残留",FI+"i61_dbp_result.png"),
- ("两融","TC_担保品市价买入北证ETF基金"): ("✅市价UI已验(未成交)","【信用账户实测】担保品买入页点『限价』按钮→切换市价成功:btn_shijia_weituo=『市』+委托策略spinner『1-五档即成剩撤』✓;提交→确认框字段全对(股东***2927/代码950025/名称/委托策略1-五档即成剩撤/数量100/『信用买入委托』)✓。注:该标的950025卖侧五档有深度(卖1 96.200/174手)→市价买入可过柜台保护价校验会即时成交;为保护共享账户(有他人持仓/负债)点『取消』未实际成交。市价切换/委托策略/字段映射均正确,提交通路已由担保品限价买入(合同号6)证实",FI+"i74_dbp_shijia_confirm.png"),
- ("两融","TC_（北证ETF基金）买入价格修改功能正常"): ("✅已通过","【实测】担保品买入页价格96.200→点『+』×2→96.202→点『-』→96.201,步长±0.001精确✓(北证ETF最小变动0.001)",FI+"i59_dbp_keyboard.png"),
- ("两融","TC_（北证ETF基金）担保品买入仓位按钮校验"): ("☑不适用(国金无仓位键)","【用户确认非缺陷】国金证券版本较老,担保品买入/融资买入页本就无仓位键(全仓/半仓/1/3/1/4)——页面与自定义数字键盘(1-9/000/0/←)均无,属版本设计,非缺陷。数量微调正常✅(见相邻用例)",FI+"i59_dbp_keyboard.png"),
- ("两融","TC_（北证ETF基金）担保品买入数量微调正常"): ("✅已通过","【实测】担保品买入页数量空→点『+』→回填100(最小步长);100→『+』→101(+1);101→『-』→100(-1),微调正确",FI+"i59_dbp_keyboard.png"),
- ("两融","TC_担保品限价卖出北证ETF基金"): ("✅已通过","【信用账户盘中实测·合同号8→撤9】担保品卖出页从『我的持仓』(950022/950025/950027)选950025回填:名称/价格96.200/涨停125.063跌停67.343/可卖2900股✓;设涨停价125.063(不成交)数量100→点担保品卖出→确认框字段全对(股东***2927/950025/名称/委托价格125.063/数量100/『信用卖出委托』)→点确认卖出→『委托成功,合同号为8』✓;撤单确认框(撤信用交易单/950025/125.063/100)→『提交成功,合同号:9』✓,零残留",FI+"i66_dbs_result.png"),
- ("两融","TC_担保品市价卖出北证ETF基金"): ("🟡待盘口深度标的","担保品卖出市价委托同普通/两融市价:测试标的950025买侧五档全『--』(买1-5空)→柜台无参考价格带校验市价保护价→会返[63600无效的保护价格](p_down=p_up=0),非客户端缺陷;市价切换/委托策略UI已由担保品市价买入验证。待有买盘深度的标的复跑实际成交",""),
- ("两融","TC_（北证ETF基金）卖出价格修改功能正常"): ("✅已通过","【实测】担保品卖出页价格96.200→点『+』→96.201,步长±0.001精确✓",FI+"i65_dbs_confirm.png"),
- ("两融","TC_融资限价买入北证ETF基金"): ("☑无可交易融资标的(跳过)","【实测·用户确认口径】融资买入页输950025:证券名称/价格/涨跌停/可买均为空(--),950025不在融资标的池;强制提交确认框『证券名称』亦为空(柜台会驳)→已点取消。国金/当前环境无可交易的融资标的,融资类用例按用户口径跳过。可用查询→『融资标的券查询』核对标的池",FI+"i64_rz_buy_attempt.png"),
- ("两融","TC_融资市价买入北证ETF基金"): ("☑无可交易融资标的(跳过)","【用户确认口径】950025非融资标的(见融资限价买入),无可交易融资标的→融资市价买入跳过",""),
- ("两融","TC_融券限价卖出北证ETF基金"): ("☑无可交易融券标的/券源(跳过)","【用户确认口径】融券卖出需融券标的+券源;950025非融资/融券标的,当前环境无融券标的及券源→跳过。可用查询→『融券券源查询』核对",""),
- ("两融","TC_买券还券限价买入北证ETF基金"): ("☑无可交易融券标的(跳过)","【用户确认口径】买券还券需先有融券负债(融券标的);当前环境无融券标的/融券负债→跳过",""),
- ("两融","TC_买券还券市价买入北证ETF基金"): ("☑无可交易融券标的(跳过)","【用户确认口径】同买券还券限价:无融券标的/负债→跳过",""),
- ("两融","TC_卖券还款限价卖出北证ETF基金"): ("✅已通过","【信用账户盘中实测·合同号10→撤11】卖券还款页从『我的持仓』选950025回填:可卖2900股/涨跌停/该标的负债总额3257.67(确有融资负债可还)✓;设涨停价125.063(不成交)数量100→点卖券还款→确认框字段全对(股东***2927/950025/名称/委托价格125.063/数量100/『卖券还款委托』)→点确认卖出→『委托成功,合同号为10』✓;撤单确认框(撤信用融资单/950025/125.063/100)→『提交成功,合同号:11』✓,零残留",FI+"i70_mqhk_result.png"),
- ("两融","TC_卖券还款市价卖出北证ETF基金"): ("🟡待盘口深度标的","卖券还款市价委托同市价卖出:950025买侧五档空→柜台会返[63600无效保护价],非缺陷;卖券还款限价链已实测全通(合同号10→撤11)。待有买盘深度标的复跑实际成交",""),
- ("两融","TC_查询北交所ETF数据正常"): ("✅已通过","【信用账户实测】查询菜单完整(成交查询/委托查询/实时合约流水/当日·历史资金流水/交割单/客户证券持仓/负债变动流水/融资标的券查询/融券券源查询);委托查询正确渲染950025全部当日委托(证券名称北证50ETF测试39/代码/委托时间/委托价格/状态撤·买·卖),本次AI下单合同号6/8/10及撤单7/9/11均在列✓;成交查询列头(证券名称/代码/成交时间/成交价格)正常渲染,空态『没有查询到符合条件的记录』正确(AI挂单皆非成交价并已撤,无成交)",FI+"i75_rzrq_weituo_query.png"),
- ("两融","TC_担保品转入北证ETF基金委托成功"): ("☑不测(用户确认)","【用户确认不测】担保品划转(转入)不测;且国金『划转』需弹出『普通账号登录』框输入普通账号+交易密码(信用↔普通双重认证),AI无普通账号密码,实际划转会改动共享账户持仓状态,故不测",""),
- ("两融","TC_担保品转出北证ETF委托成功"): ("☑不测(用户确认)","【用户确认不测】担保品划转(转出)不测;同转入,需普通账号登录+改动共享账户状态,不测",""),
- ("两融","TC_北证A股负债顺序还劵委托成功"): ("☑无融券负债/标的(跳过)","【用户确认口径】直接还券(负债顺序还券)需融券负债+北证A股融券标的;当前环境无融券标的/融券负债→跳过",""),
+# 这些只是通用的列名别名，不包含任何具体用例内容。结果中的字段名也支持
+# 英文写法，方便 LLM 和不同项目的执行器直接复用。
+HEADER_ALIASES: dict[str, tuple[str, ...]] = {
+    "case_id": (
+        "用例id",
+        "用例编号",
+        "测试用例id",
+        "测试用例编号",
+        "tcid",
+        "tc编号",
+        "caseid",
+        "case_id",
+    ),
+    "case_name": (
+        "用例名称",
+        "用例名",
+        "测试用例名称",
+        "测试用例名",
+        "case name",
+        "case_name",
+    ),
+    "priority": ("优先级", "priority", "级别"),
+    "step": ("步骤", "步骤名称", "步骤描述", "step", "step name"),
 }
-FILL={"✅":"C6EFCE","🟡":"FFEB9C","⛔":"FFC7CE","⚠":"FFD966","☑":"D9D9D9"}
-def fill_for(s):
-    for k,c in FILL.items():
-        if s.startswith(k): return PatternFill("solid", fgColor=c)
+
+STATUS_COLORS = {
+    "pass": "C6EFCE",
+    "通过": "C6EFCE",
+    "成功": "C6EFCE",
+    "✅": "C6EFCE",
+    "fail": "FFC7CE",
+    "失败": "FFC7CE",
+    "不通过": "FFC7CE",
+    "❌": "FFC7CE",
+    "blocked": "FFEB9C",
+    "阻塞": "FFEB9C",
+    "⛔": "FFEB9C",
+    "⚠": "FFEB9C",
+    "待数据": "FFEB9C",
+    "待测试": "FFEB9C",
+    "待跑": "FFEB9C",
+    "🟡": "FFEB9C",
+    "🟢": "C6EFCE",
+    "skip": "D9E1F2",
+    "跳过": "D9E1F2",
+    "⏭": "D9E1F2",
+    "☑": "D9E1F2",
+}
+
+
+class AnnotationError(ValueError):
+    """结果无法安全定位或输入契约不正确。"""
+
+
+def _text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value).strip()
+
+
+def _norm(value: Any) -> str:
+    """归一化字段值，只处理空白和大小写，不删除业务字符。"""
+
+    return re.sub(r"\s+", "", _text(value)).casefold()
+
+
+def _first(record: Mapping[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if key in record and record[key] not in (None, ""):
+            return record[key]
     return None
 
-wb = openpyxl.load_workbook(SRC)
-hf=Font(bold=True,color="FFFFFF"); hfill=PatternFill("solid",fgColor="4472C4")
-stat={"✅":0,"🟡":0,"⛔":0,"·":0}; tcnt={"🟢":0,"🟡":0,"🟠":0,"⬜":0}; embedded=0; done=set()
 
-for ws in wb.worksheets:
-    hr=None
-    for r in range(1,min(6,ws.max_row)+1):
-        vals=[norm(ws.cell(r,c).value) for c in range(1,ws.max_column+1)]
-        if any("用例名称" in v for v in vals) and any("步骤" in v for v in vals): hr=r;break
-    if hr is None: continue
-    hdr=[norm(ws.cell(hr,c).value) for c in range(1,ws.max_column+1)]
-    def col(s):
-        for j,h in enumerate(hdr,1):
-            if s in h: return j
+def _as_int(value: Any) -> int | None:
+    if value in (None, ""):
         return None
-    ci_n=col("用例名称");ci_p=col("优先级");ci_pre=col("前置条件");ci_d=col("步骤描述");ci_e=col("预期结果")
-    is_ios="ios" in ws.title.lower(); base=ws.max_column
-    cols={"档位":base+1,"状态":base+2,"实测结果":base+3,"证据":base+4,"时间":base+5}
-    for nm,off in cols.items():
-        c=ws.cell(hr,off,"🤖AI"+nm); c.font=hf; c.fill=hfill; c.alignment=Alignment(horizontal="center")
-    ws.column_dimensions[ws.cell(hr,cols["档位"]).column_letter].width=13
-    ws.column_dimensions[ws.cell(hr,cols["状态"]).column_letter].width=14
-    ws.column_dimensions[ws.cell(hr,cols["实测结果"]).column_letter].width=52
-    ws.column_dimensions[ws.cell(hr,cols["证据"]).column_letter].width=23   # 容纳内联缩略图
-    fp_n=fp_p=fp_pre=""
-    for r in range(hr+1, ws.max_row+1):
-        rv=[norm(ws.cell(r,c).value) for c in range(1,base+1)]
-        if not any(v.strip() for v in rv): continue
-        nm=norm(ws.cell(r,ci_n).value).strip() if ci_n else ""
-        pp=norm(ws.cell(r,ci_p).value) if ci_p else ""
-        pre=norm(ws.cell(r,ci_pre).value) if ci_pre else ""
-        de=norm(ws.cell(r,ci_d).value) if ci_d else ""; ex=norm(ws.cell(r,ci_e).value) if ci_e else ""
-        if nm: fp_n=nm
-        if pp.strip(): fp_p=pp
-        if pre.strip(): fp_pre=pre
-        tg=tierof(is_ios,ex,de+" "+fp_n+" "+fp_pre,de)
-        ws.cell(r,cols["档位"],tg); tcnt[tg[0]]=tcnt.get(tg[0],0)+1
-        key=(ws.title,fp_n)
-        if key in tested:
-            st,actual,img=tested[key]
-            ws.cell(r,cols["状态"],st); f=fill_for(st)
-            if f:
-                for cc in range(cols["档位"],cols["时间"]+1): ws.cell(r,cc).fill=f
-            ws.cell(r,cols["实测结果"],actual).alignment=Alignment(wrap_text=True,vertical="top")
-            ws.cell(r,cols["时间"],D)
-            stat[st[0]]=stat.get(st[0],0)+1
-            # 首次遇到该用例 → 内联嵌图到证据单元格
-            if key not in done:
-                done.add(key)
-                p=os.path.join(RUNS,img.replace("/",os.sep)) if img else ""
-                if img and os.path.isfile(p):
-                    im=XLImage(p); im.width=IMG_W; im.height=IMG_H
-                    ws.add_image(im, ws.cell(r,cols["证据"]).coordinate)
-                    ws.row_dimensions[r].height=IMG_H*0.75   # 行高(pt)容纳图
-                    embedded+=1
-                elif not img:
-                    ws.cell(r,cols["证据"],"(元素树验证,无截图)")
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as exc:
+        raise AnnotationError(f"行号必须是整数，收到: {value!r}") from exc
+    if number < 1:
+        raise AnnotationError(f"行号必须大于 0，收到: {number}")
+    return number
+
+
+def _evidence_items(value: Any) -> list[tuple[str, str | None]]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, (str, Path)):
+        return [(_text(value), _text(value))]
+    if isinstance(value, Mapping):
+        path = _first(value, "path", "file", "filepath", "uri")
+        description = _first(value, "description", "text", "label")
+        if path is not None and description:
+            return [(f"{_text(description)}: {_text(path)}", _text(path))]
+        text = _text(path or description)
+        return [(text, _text(path) if path is not None else None)] if text else []
+    if isinstance(value, Iterable):
+        items: list[tuple[str, str | None]] = []
+        for item in value:
+            items.extend(_evidence_items(item))
+        return items
+    return [(_text(value), None)]
+
+
+def _as_evidence(value: Any) -> list[str]:
+    return [display for display, _ in _evidence_items(value) if display]
+
+
+def _as_evidence_paths(value: Any) -> list[str]:
+    return [path for _, path in _evidence_items(value) if path]
+
+
+def _load_result_document(path: Path) -> Any:
+    if not path.exists():
+        raise AnnotationError(f"结果文件不存在: {path}")
+    try:
+        content = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise AnnotationError(f"结果文件必须使用 UTF-8 编码: {path}") from exc
+    if path.suffix.casefold() in {".yaml", ".yml"}:
+        return yaml.safe_load(content)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise AnnotationError(f"结果文件不是合法 JSON: {path}: {exc}") from exc
+
+
+def normalize_results(document: Any) -> list[dict[str, Any]]:
+    """把常见的结果外壳归一化为结果记录列表。
+
+    支持 ``[{...}]``、``{"cases": [{...}]}``、``{"results": [{...}]}``。
+    记录内字段兼容 ``id/tc_id``、``name``、``result``、``time`` 等常见叫法。
+    """
+
+    if document is None:
+        return []
+    if isinstance(document, Mapping):
+        payload = _first(document, "cases", "results", "items", "data")
+        if payload is None:
+            # 允许单条结果对象，减少 LLM 生成结果时的包裹要求。
+            payload = [document]
+    else:
+        payload = document
+    if not isinstance(payload, list):
+        raise AnnotationError("结果必须是列表，或包含 cases/results/items/data 列表的对象")
+
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(payload, start=1):
+        if not isinstance(item, Mapping):
+            raise AnnotationError(f"第 {index} 条结果必须是对象，收到: {item!r}")
+        record = dict(item)
+        record["case_id"] = _text(_first(record, "case_id", "caseId", "id", "tc_id", "tcId")) or None
+        record["case_name"] = _text(_first(record, "case_name", "caseName", "name", "用例名称")) or None
+        record["sheet"] = _text(_first(record, "sheet", "sheet_name", "sheetName", "工作表")) or None
+        record["row"] = _as_int(_first(record, "row", "row_number", "rowNumber", "source_row", "sourceRow"))
+        record["status"] = _text(_first(record, "status", "state", "result_status", "判定")) or "·待跑"
+        record["actual"] = _text(_first(record, "actual", "result", "actual_result", "实测结果", "description"))
+        record["tier"] = _text(_first(record, "tier", "level", "档位"))
+        record["tested_at"] = _text(_first(record, "tested_at", "testedAt", "time", "date", "测试时间"))
+        raw_evidence = _first(record, "evidence", "evidence_paths", "evidencePaths", "screenshots", "证据")
+        record["evidence"] = _as_evidence(raw_evidence)
+        record["evidence_paths"] = _as_evidence_paths(raw_evidence)
+        normalized.append(record)
+    return normalized
+
+
+def load_results(path: str | os.PathLike[str]) -> list[dict[str, Any]]:
+    """从 JSON/YAML 结果文件读取并归一化结果。"""
+
+    result_path = Path(path).expanduser().resolve()
+    return normalize_results(_load_result_document(result_path))
+
+
+def _header_kind(value: Any) -> str | None:
+    normalized = _norm(value)
+    if not normalized:
+        return None
+    for kind, aliases in HEADER_ALIASES.items():
+        if normalized in {_norm(alias) for alias in aliases}:
+            return kind
+    return None
+
+
+def _column_reference(value: str | int) -> int | None:
+    """把列号、Excel 字母列或表头文字转换成列号。"""
+
+    if isinstance(value, int):
+        return value if value > 0 else None
+    text = _text(value)
+    if text.isdigit():
+        number = int(text)
+        return number if number > 0 else None
+    if re.fullmatch(r"[A-Za-z]{1,3}", text):
+        try:
+            return column_index_from_string(text.upper())
+        except ValueError:
+            return None
+    return None
+
+
+def _column_from_reference(ws: Any, header_row: int, reference: str | int, kind: str) -> int:
+    column_number = _column_reference(reference)
+    if column_number is None:
+        target = _norm(reference)
+        for candidate in range(1, ws.max_column + 1):
+            if _norm(ws.cell(header_row, candidate).value) == target:
+                return candidate
+        raise AnnotationError(f"工作表 {ws.title!r} 的第 {header_row} 行找不到 {kind} 列: {reference!r}")
+    if column_number > ws.max_column and column_number > 16384:
+        raise AnnotationError(f"工作表 {ws.title!r} 的 {kind} 列超出 Excel 范围: {reference!r}")
+    return column_number
+
+
+def _columns_from_header(ws: Any, header_row: int, *, case_id_column: str | int | None = None, case_name_column: str | int | None = None) -> dict[str, int]:
+    columns: dict[str, int] = {}
+    for column_number in range(1, ws.max_column + 1):
+        kind = _header_kind(ws.cell(header_row, column_number).value)
+        if kind and kind not in columns:
+            columns[kind] = column_number
+    if case_id_column is not None:
+        columns["case_id"] = _column_from_reference(ws, header_row, case_id_column, "用例 ID")
+    if case_name_column is not None:
+        columns["case_name"] = _column_from_reference(ws, header_row, case_name_column, "用例名称")
+    return columns
+
+
+def find_header_row(ws: Any, scan_limit: int = 30, *, case_id_column: str | int | None = None, case_name_column: str | int | None = None, header_row: int | None = None) -> tuple[int | None, dict[str, int]]:
+    """查找表头行，并返回 ``{字段类型: 列号}``。"""
+
+    if header_row is not None:
+        if header_row < 1 or header_row > ws.max_row:
+            raise AnnotationError(f"工作表 {ws.title!r} 的表头行超出范围: {header_row}")
+        return header_row, _columns_from_header(
+            ws,
+            header_row,
+            case_id_column=case_id_column,
+            case_name_column=case_name_column,
+        )
+
+    upper = min(ws.max_row, scan_limit)
+    best: tuple[int | None, dict[str, int]] = (None, {})
+    for row_number in range(1, upper + 1):
+        columns = _columns_from_header(ws, row_number)
+        if "case_name" in columns or "case_id" in columns:
+            # 同时命中步骤/优先级的行更像真正表头；只有用例名也允许，适配极简用例表。
+            score = len(columns) + (2 if "step" in columns else 0) + (1 if "priority" in columns else 0)
+            previous_score = len(best[1]) + (2 if "step" in best[1] else 0) + (1 if "priority" in best[1] else 0)
+            if best[0] is None or score > previous_score:
+                best = (row_number, columns)
+    return best
+
+
+def _row_is_empty(ws: Any, row_number: int) -> bool:
+    return all(ws.cell(row_number, column).value in (None, "") for column in range(1, ws.max_column + 1))
+
+
+def _case_rows(ws: Any, header_row: int, columns: Mapping[str, int]) -> list[dict[str, Any]]:
+    """读取数据行，并对合并/空白的用例名和 ID 做向下填充。"""
+
+    rows: list[dict[str, Any]] = []
+    current_id: str | None = None
+    current_name: str | None = None
+    for row_number in range(header_row + 1, ws.max_row + 1):
+        if _row_is_empty(ws, row_number):
+            continue
+        raw_id = _text(ws.cell(row_number, columns["case_id"]).value) if "case_id" in columns else ""
+        raw_name = _text(ws.cell(row_number, columns["case_name"]).value) if "case_name" in columns else ""
+        if raw_id:
+            current_id = raw_id
+        if raw_name:
+            if "case_id" in columns and not raw_id and current_name and _norm(raw_name) != _norm(current_name):
+                # 新用例没有填写 ID 时，不把上一个用例的 ID 误带过来。
+                current_id = None
+            current_name = raw_name
+        rows.append({"row": row_number, "case_id": current_id, "case_name": current_name})
+    return rows
+
+
+def _blocks(row_numbers: Sequence[int]) -> list[list[int]]:
+    if not row_numbers:
+        return []
+    result: list[list[int]] = [[row_numbers[0]]]
+    for row_number in row_numbers[1:]:
+        if row_number == result[-1][-1] + 1:
+            result[-1].append(row_number)
         else:
-            ws.cell(r,cols["状态"],"·待跑"); stat["·"]+=1
+            result.append([row_number])
+    return result
 
-# 说明页
-info=wb.create_sheet("🤖AI自测说明",0)
-L=[("北交所ETF用例 · AI自动化自测标注",1),("",0),
- ("每行=1校验点。右侧追加 AI 列；证据截图【内联】在各行『AI证据』单元格(该行自动加高)。",0),
- ("档位(客户端自测口径)：🟢直接全自动(可驱动+取数+截图) 🟡需测试数据/交易时段 ⬜iOS N/A",0),
- ("  说明：『两端/自营一致』『走势图视觉正确』由测试团队核对,不作我方自动化降级项,故按🟢(我方保证到位+有数据+有截图即可)。",0),
- ("状态：✅已通过 🟡部分/存疑 ⛔阻塞 ·待跑",0),("",0),
- (f"实测汇总(2026-07-28非盘中批 + 07-29盘中批)：✅通过{stat['✅']}行 ⚠客户端到位/后端待人工{stat.get('⚠',0)}行 🟡待数据·入口{stat['🟡']}行 ☑不适用{stat.get('☑',0)}行 ⛔疑似缺陷{stat['⛔']}行 ·未跑{stat['·']}行",1),
- (f"全表档位(行)：🟢{tcnt.get('🟢',0)} 🟡{tcnt.get('🟡',0)} ⬜{tcnt.get('⬜',0)}",0),("",0),
- ("已知：T+0北交所ETF标的=950025；950025可作担保品(信用账户可买卖)但非融资/融券标的池成员→融资买入/融券卖出/买券还券/融资融券标识等用例仍待有『可交易融资/融券标的』再测。",0),
- ("✅ 下单链盘中实测通过(买入)：限价买入950025→确认框字段全对→『委托已提交,合同号2』→撤单列表可见(已报)→撤单确认框字段全对→『撤单已提交』。(早前一次查不到委托是AI操作过慢触发『请勿重复提交』防重锁所致,非环境异常;操作连贯即正常。)",0),
- ("✅ 卖出链盘中实测通过(卖出,标的950015有持仓)：限价卖出→确认框字段全对(***5183/950015/300.000/100)→『委托已提交,合同号5』→撤单列表可见→撤单确认框字段全对→『撤单已提交』,全链路走通。",0),
- ("⚠️ 市价卖出：客户端UI+委托策略+保护限价+确认框字段全对,点确认已达柜台并返回明确回执[63600无效的保护价格];因测试标的950015盘口无深度(五档全『--』),柜台无价格带校验保护价→驳回,非客户端缺陷。待有盘口深度的市价标的复跑实际成交。",0),
- ("💡 AI驱动注意：下单确认框→点确认要连贯快速,过慢/多余操作会触发客户端防重复提交锁导致委托未受理。此类确定性强的下单回归最宜固化 Maestro。",0),
- ("✅ 两融(融资融券)盘中实测通过(2026-07-29,用户提供支持两融的信用账号,股东***2927,可用保证金944万):入口=交易tab顶部『融资融券』子tab。已跑通3条完整下单/撤单链——担保品限价买入(合同号6→撤7)、担保品限价卖出(涨停价,合同号8→撤9)、卖券还款限价(涨停价,合同号10→撤11);均跌停买/涨停卖不成交、撤单后账户零残留。担保品买入价格微调/数量微调✅;担保品市价买入(市价切换+委托策略『五档即成剩撤』字段全对,为保护共享账户取消未成交)✅;委托/成交查询950025数据渲染正常✅。",0),
- ("☑ 两融跳过项(无标的,2026-07-29):950025非融资/融券标的池成员→融资买入(限价/市价)、融券卖出、买券还券(限价/市价)、直接还券 均『无可交易融资/融券标的』,按用户口径跳过(证据:融资买入页证券名称/可买全空);担保品市价卖出/卖券还款市价=需买盘深度标的(同[63600]保护价问题);担保品划转(转入/转出)=用户确认不测(且需普通账号登录改动共享账户)。",0),
- ("☑ 两融(用户确认非缺陷):『担保品买入/融资买入』页无仓位键(全仓/半仓/1/3/1/4)——页面及数字键盘均无。国金证券版本较老,本就无仓位键,属版本设计非缺陷;数量微调正常。",0),
- ("✅ 原疑似缺陷①(日K设置显示IOPV开关)→【用户确认非缺陷】：Android端不区分周期,日K/分时共用IOPV设置面板,显示IOPV开关属正常。",0),
- ("✅ 原疑似缺陷②(买入仓位键回填未按100取整)→【用户确认非缺陷】：北交所ETF最小100股、之后按1股步长,仓位计算结果>100时不按100取整属正常规则。",0),
- ("☑ 已知不支持(非缺陷,用户确认)：①『大宗交易』不支持数量微调/仓位键;②『跟踪指数』国金版本不支持;③『闪电下单』不支持两融交易及市价委托(仅限价快速下单);④『新三板交易』模块内无大宗功能(相关大宗用例不测);⑤『融资融券(两融)』tab内无大宗入口(两融大宗用例跳过);⑥『担保品买入/融资买入』无仓位键(国金老版本设计,仓位键校验用例不适用)。",0),
- ("ℹ️ 新三板市价委托入口(用户告知)：输入代码后点价格旁『限价』按钮→弹切换框→选『市价买入/市价卖出』。目前与普通交易市价同存在[63600无效的保护价格](测试标的无盘口深度),待用户确认后再复测。",0),
- ("ℹ️ 入口未跑(留待人工)：底部工具栏筹码分布(难描述,空着)。ETF列表内北证ETF条目已定位(北证50ETF测试3/950002,涨幅排序置顶,跳转正常)。",0),
- ("🟡 IOPV字段显示类(线显示/溢价率刷新/切换联动/横屏数据/L2/长辈版)：IOPV开关/联动/设置✅;IOPV字段(实时净值/溢价率)显示依赖标的实时净值行情,北证测试标的950025无净值feed→字段未渲染,归测试团队用正式净值标的核对。(测试中曾切换IOPV线开关,测试团队可自行复位)",0),
- ("⏰ 下单/撤单/成交/委托/依赖历史查询 须交易时段(工作日9:30-15:00)跑; 非交易时段柜台拒单[120147]。已忽略表:风险警示/ETF基金/北交所大宗/两融大宗/适当性/iOS。",0)]
-for i,(t,b) in enumerate(L,1):
-    c=info.cell(i,1,t);
-    if b: c.font=Font(bold=True,size=12)
-info.column_dimensions["A"].width=118
 
-# 保存(带锁兜底改名)
-def save_fb(wb,path):
-    try: wb.save(path); return path
-    except PermissionError:
-        b,e=os.path.splitext(path)
-        for i in range(2,30):
-            try: wb.save(f"{b}_{i}{e}"); return f"{b}_{i}{e}"
-            except PermissionError: continue
-        raise
-saved=save_fb(wb,OUT)
-print("已生成:",saved,"| 内联嵌图:",embedded,"| 状态:",stat,"| 大小KB:",round(os.path.getsize(saved)/1024))
+def _select_sheets(wb: Any, sheet_name: str | None) -> list[Any]:
+    if not sheet_name:
+        return list(wb.worksheets)
+    if sheet_name not in wb.sheetnames:
+        raise AnnotationError(f"结果指定的工作表不存在: {sheet_name}")
+    return [wb[sheet_name]]
+
+
+def _resolve_rows(wb: Any, record: Mapping[str, Any], case_rows: Mapping[str, list[dict[str, Any]]]) -> list[tuple[Any, int]]:
+    sheet_name = _text(record.get("sheet")) or None
+    row_number = record.get("row")
+    case_id = _norm(record.get("case_id"))
+    case_name = _norm(record.get("case_name"))
+    if row_number is None and not case_id and not case_name:
+        raise AnnotationError("结果至少需要 row/source_row、case_id 或 case_name 之一")
+
+    candidates: list[tuple[Any, dict[str, Any]]] = []
+    for ws in _select_sheets(wb, sheet_name):
+        for row in case_rows.get(ws.title, []):
+            if row_number is not None:
+                if row["row"] == row_number:
+                    candidates.append((ws, row))
+            elif case_id:
+                if _norm(row.get("case_id")) == case_id:
+                    candidates.append((ws, row))
+            elif _norm(row.get("case_name")) == case_name:
+                candidates.append((ws, row))
+
+    if row_number is not None:
+        if not candidates:
+            target = f"{sheet_name}!{row_number}" if sheet_name else str(row_number)
+            raise AnnotationError(f"找不到结果指定的行: {target}")
+        candidate_sheets = {ws.title for ws, _ in candidates}
+        if not sheet_name and len(candidate_sheets) > 1:
+            locations = ", ".join(f"{name}!{row_number}" for name in sorted(candidate_sheets))
+            raise AnnotationError(f"行号在多个工作表中都存在，请补充 sheet；候选位置: {locations}")
+        expanded: list[tuple[Any, int]] = []
+        for ws, selected_row in candidates:
+            # row 是最可靠的消歧键；同时给出 case_name 时，把该行扩展为同一
+            # 连续用例区块，覆盖合并单元格/空白用例名下的后续步骤。
+            identity_kind = None
+            identity_value = ""
+            if case_id and _norm(selected_row.get("case_id")) == case_id:
+                identity_kind, identity_value = "case_id", case_id
+            elif case_name and _norm(selected_row.get("case_name")) == case_name:
+                identity_kind, identity_value = "case_name", case_name
+            if identity_kind:
+                all_rows = [
+                    item["row"]
+                    for item in case_rows.get(ws.title, [])
+                    if _norm(item.get(identity_kind)) == identity_value
+                ]
+                block = next((block for block in _blocks(sorted(all_rows)) if selected_row["row"] in block), None)
+                if block:
+                    expanded.extend((ws, row) for row in block)
+                    continue
+            expanded.append((ws, selected_row["row"]))
+        return expanded
+    if not candidates:
+        return []
+
+    # 一个连续区块可代表一个多步骤用例；多个不连续区块说明名称/ID不唯一，
+    # 必须让调用方补充 row，不能把结果写到可能是另一个用例的行上。
+    grouped: dict[str, list[int]] = {}
+    for ws, row in candidates:
+        grouped.setdefault(ws.title, []).append(row["row"])
+    blocks = [(name, block) for name, rows in grouped.items() for block in _blocks(sorted(rows))]
+    if len(blocks) > 1:
+        identity = record.get("case_id") or record.get("case_name")
+        locations = ", ".join(f"{name}!{block[0]}-{block[-1]}" for name, block in blocks)
+        raise AnnotationError(f"结果定位不唯一 ({identity!r})，请补充 row/source_row；候选区块: {locations}")
+    return [(ws, row["row"]) for ws, row in candidates]
+
+
+def _copy_header_style(source: Any, target: Any) -> None:
+    if source is None:
+        return
+    target.font = copy.copy(source.font)
+    target.fill = copy.copy(source.fill)
+    target.border = copy.copy(source.border)
+    target.alignment = copy.copy(source.alignment)
+    target.number_format = source.number_format
+    target.protection = copy.copy(source.protection)
+
+
+def _ensure_output_columns(ws: Any, header_row: int) -> dict[str, int]:
+    existing: dict[str, int] = {}
+    for column_number in range(1, ws.max_column + 1):
+        value = _text(ws.cell(header_row, column_number).value)
+        if value in OUTPUT_HEADERS and value not in existing:
+            existing[value] = column_number
+    next_column = ws.max_column + 1
+    source_header = ws.cell(header_row, 1)
+    for header in OUTPUT_HEADERS:
+        if header not in existing:
+            existing[header] = next_column
+            cell = ws.cell(header_row, next_column, header)
+            _copy_header_style(source_header, cell)
+            cell.font = Font(name=cell.font.name, sz=cell.font.sz, bold=True, italic=cell.font.italic, color=cell.font.color)
+            next_column += 1
+    return existing
+
+
+def _hide_legacy_columns(ws: Any, header_row: int) -> None:
+    """兼容旧版输出：ID/档位不再显示在实际用例页，但保留数据供追溯。"""
+
+    for column_number in range(1, ws.max_column + 1):
+        if _text(ws.cell(header_row, column_number).value) in LEGACY_HIDDEN_HEADERS:
+            ws.column_dimensions[get_column_letter(column_number)].hidden = True
+
+
+def _status_fill(status: str) -> PatternFill | None:
+    normalized = _norm(status)
+    for prefix, color in STATUS_COLORS.items():
+        if normalized.startswith(_norm(prefix)):
+            return PatternFill(fill_type="solid", fgColor=color)
+    return None
+
+
+def _format_output_cell(cell: Any, *, wrap: bool = True) -> None:
+    cell.alignment = Alignment(vertical="top", wrap_text=wrap)
+
+
+def _looks_like_path(value: str) -> bool:
+    path = Path(value)
+    return path.suffix.casefold() in IMAGE_SUFFIXES or "/" in value or "\\" in value or value.startswith(".")
+
+
+def _resolve_evidence_path(raw: str, *, evidence_root: Path | None, result_dir: Path | None, source_dir: Path) -> Path | None:
+    candidate = Path(raw).expanduser()
+    candidates = [candidate] if candidate.is_absolute() else []
+    if not candidate.is_absolute():
+        for root in (evidence_root, result_dir, source_dir):
+            if root:
+                candidates.append(root / candidate)
+    for item in candidates:
+        if item.exists() and item.is_file():
+            return item.resolve()
+    return None
+
+
+def _embed_evidence(ws: Any, cell: Any, evidence: Sequence[str], evidence_paths: Sequence[str] | None, *, evidence_root: Path | None, result_dir: Path | None, source_dir: Path, width: int, warnings: list[str]) -> None:
+    if not evidence:
+        return
+    paths: list[Path] = []
+    raw_paths = list(evidence_paths or evidence)
+    for raw in raw_paths:
+        path = _resolve_evidence_path(raw, evidence_root=evidence_root, result_dir=result_dir, source_dir=source_dir)
+        if path and path.suffix.casefold() in IMAGE_SUFFIXES:
+            paths.append(path)
+        elif _looks_like_path(raw):
+            warnings.append(f"证据文件不存在或不是图片，已保留文本: {raw}")
+    if not paths:
+        return
+    # 同一结果重复执行时，不重复嵌入相同证据图片。
+    if cell.value == "\n".join(evidence):
+        return
+    for path in paths:
+        image = XLImage(str(path))
+        if image.width and image.height:
+            image.height = int(width * image.height / image.width)
+        image.width = width
+        ws.add_image(image, cell.coordinate)
+        break
+
+
+def _set_cell_value(cell: Any, value: Any, *, fill: PatternFill | None = None) -> None:
+    cell.value = value if value not in (None, "") else None
+    _format_output_cell(cell)
+    if fill:
+        cell.fill = fill
+
+
+def _write_summary(wb: Any, report: Mapping[str, Any], source_path: Path, generated_at: str) -> None:
+    if SUMMARY_SHEET in wb.sheetnames:
+        del wb[SUMMARY_SHEET]
+    ws = wb.create_sheet(SUMMARY_SHEET)
+    ws.freeze_panes = "A2"
+    ws.append(["字段", "值"])
+    ws.append(["源文件", str(source_path)])
+    ws.append(["生成时间", generated_at])
+    ws.append(["匹配结果数", len(report["matched"])])
+    ws.append(["未匹配结果数", len(report["unmatched"])])
+    ws.append(["警告数", len(report["warnings"])])
+    ws.append([])
+    ws.append(["状态", "数量"])
+    for status, count in sorted(Counter(item["status"] for item in report["matched"]).items()):
+        ws.append([status, count])
+    ws.append([])
+    ws.append(["工作表", "行号", "用例 ID", "用例名称", "档位", "状态", "实测结果", "证据"])
+    for item in report["matched"]:
+        ws.append([
+            item["sheet"],
+            ",".join(str(row) for row in item["rows"]),
+            item.get("case_id") or "",
+            item.get("case_name") or "",
+            item.get("tier") or "",
+            item["status"],
+            item["actual"],
+            "\n".join(item["evidence"]),
+        ])
+    if report["unmatched"]:
+        ws.append([])
+        ws.append(["未匹配结果", "原因"])
+        for item in report["unmatched"]:
+            ws.append([item["identity"], item["reason"]])
+    if report["warnings"]:
+        ws.append([])
+        ws.append(["警告"])
+        for warning in report["warnings"]:
+            ws.append([warning])
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(fill_type="solid", fgColor="D9E1F2")
+    for row in ws.iter_rows():
+        for cell in row:
+            _format_output_cell(cell)
+    for column, width in {"A": 24, "B": 22, "C": 20, "D": 40, "E": 14, "F": 18, "G": 60, "H": 36}.items():
+        ws.column_dimensions[column].width = width
+
+
+def annotate_workbook(
+    src: str | os.PathLike[str],
+    results: Sequence[Mapping[str, Any]] | Mapping[str, Any],
+    out: str | os.PathLike[str] | None = None,
+    *,
+    evidence_root: str | os.PathLike[str] | None = None,
+    result_dir: str | os.PathLike[str] | None = None,
+    sheet: str | None = None,
+    header_row: int | None = None,
+    case_id_column: str | int | None = None,
+    case_name_column: str | int | None = None,
+    generated_at: str | None = None,
+    strict: bool = False,
+    append_summary: bool = True,
+    evidence_width: int = 150,
+) -> dict[str, Any]:
+    """回填结果并返回机器可读报告。
+
+    ``results`` 可以直接是结果列表，也可以是 ``{"cases": [...]}`` 对象。
+    常见中文/英文表头会自动识别；遇到自定义表头时传入 ``header_row`` 和
+    ``case_id_column``/``case_name_column``，列参数可用列号、Excel 字母或表头文字。
+    ``strict=True`` 时，只要存在未匹配结果就抛出 :class:`AnnotationError`；
+    歧义定位无论 strict 与否都会抛错。
+    """
+
+    source_path = Path(src).expanduser().resolve()
+    if source_path.suffix.casefold() not in {".xlsx", ".xlsm"}:
+        raise AnnotationError(f"仅支持 .xlsx/.xlsm 文件，不支持: {source_path.suffix or source_path.name}")
+    if not source_path.exists():
+        raise AnnotationError(f"用例文件不存在: {source_path}")
+    if evidence_width < 20:
+        raise AnnotationError("evidence_width 不能小于 20")
+
+    output_path = Path(out).expanduser().resolve() if out else source_path.with_name(f"{source_path.stem}_AI自测结果{source_path.suffix}")
+    if output_path == source_path:
+        raise AnnotationError("输出文件不能覆盖源用例文件，请指定不同的 --out 路径")
+    if isinstance(results, Mapping):
+        result_records = normalize_results(results)
+    else:
+        result_records = normalize_results(list(results))
+    result_root = Path(result_dir).expanduser().resolve() if result_dir else None
+    evidence_root_path = Path(evidence_root).expanduser().resolve() if evidence_root else None
+    generated = generated_at or datetime.now().astimezone().isoformat(timespec="seconds")
+
+    keep_vba = source_path.suffix.casefold() == ".xlsm"
+    wb = load_workbook(source_path, keep_vba=keep_vba, keep_links=True)
+    case_rows: dict[str, list[dict[str, Any]]] = {}
+    sheet_headers: dict[str, tuple[int, dict[str, int]]] = {}
+    skipped_sheets: list[str] = []
+    for ws in wb.worksheets:
+        if ws.title == SUMMARY_SHEET:
+            continue
+        detected_header_row, columns = find_header_row(ws, header_row=header_row)
+        if detected_header_row is None:
+            skipped_sheets.append(ws.title)
+            continue
+        columns = _columns_from_header(
+            ws,
+            detected_header_row,
+            case_id_column=case_id_column,
+            case_name_column=case_name_column,
+        )
+        sheet_headers[ws.title] = (detected_header_row, columns)
+        case_rows[ws.title] = _case_rows(ws, detected_header_row, columns)
+
+    report: dict[str, Any] = {
+        "source": str(source_path),
+        "output": str(output_path),
+        "matched": [],
+        "unmatched": [],
+        "warnings": [],
+        "skipped_sheets": skipped_sheets,
+    }
+
+    for index, record in enumerate(result_records, start=1):
+        resolve_record = record
+        if sheet and not record.get("sheet"):
+            resolve_record = dict(record)
+            resolve_record["sheet"] = sheet
+        matches = _resolve_rows(wb, resolve_record, case_rows)
+        if not matches:
+            identity = record.get("case_id") or record.get("case_name") or record.get("row") or f"结果#{index}"
+            report["unmatched"].append({
+                "identity": str(identity),
+                "reason": "未找到对应工作表/用例 ID/用例名称/行号",
+                "case_id": record.get("case_id"),
+                "case_name": record.get("case_name"),
+            })
+            continue
+
+        matched_by_sheet: dict[str, list[int]] = {}
+        for ws, row_number in matches:
+            matched_by_sheet.setdefault(ws.title, []).append(row_number)
+        for ws_name, row_numbers in matched_by_sheet.items():
+            ws = wb[ws_name]
+            header_row, _ = sheet_headers[ws_name]
+            _hide_legacy_columns(ws, header_row)
+            output_columns = _ensure_output_columns(ws, header_row)
+            _, source_columns = sheet_headers[ws_name]
+            tier = record.get("tier")
+            if not tier and "priority" in source_columns:
+                tier = _text(ws.cell(min(row_numbers), source_columns["priority"]).value)
+            for row_number in row_numbers:
+                status_cell = ws.cell(row_number, output_columns["🤖AI状态"])
+                actual_cell = ws.cell(row_number, output_columns["🤖AI实测结果"])
+                evidence_cell = ws.cell(row_number, output_columns["🤖AI证据"])
+                time_cell = ws.cell(row_number, output_columns["🤖AI时间"])
+                _set_cell_value(status_cell, record.get("status"), fill=_status_fill(_text(record.get("status"))))
+                _set_cell_value(actual_cell, record.get("actual"))
+                evidence_text = "\n".join(record.get("evidence", []))
+                if row_number == min(row_numbers):
+                    _embed_evidence(
+                        ws,
+                        evidence_cell,
+                        record.get("evidence", []),
+                        record.get("evidence_paths", []),
+                        evidence_root=evidence_root_path,
+                        result_dir=result_root,
+                        source_dir=source_path.parent,
+                        width=evidence_width,
+                        warnings=report["warnings"],
+                    )
+                _set_cell_value(evidence_cell, evidence_text)
+                _set_cell_value(time_cell, record.get("tested_at") or generated)
+                ws.column_dimensions[get_column_letter(output_columns["🤖AI状态"])].width = 18
+                ws.column_dimensions[get_column_letter(output_columns["🤖AI实测结果"])].width = 58
+                ws.column_dimensions[get_column_letter(output_columns["🤖AI证据"])].width = 34
+                ws.column_dimensions[get_column_letter(output_columns["🤖AI时间"])].width = 22
+                if row_number == min(row_numbers) and evidence_text:
+                    height = ws.row_dimensions[row_number].height or 15
+                    ws.row_dimensions[row_number].height = max(height, min(260, evidence_width * 2.25))
+            report["matched"].append({
+                "sheet": ws_name,
+                "rows": sorted(row_numbers),
+                "case_id": record.get("case_id"),
+                "case_name": record.get("case_name"),
+                "tier": tier,
+                "status": record.get("status"),
+                "actual": record.get("actual"),
+                "evidence": record.get("evidence", []),
+            })
+
+    if strict and report["unmatched"]:
+        details = ", ".join(item["identity"] for item in report["unmatched"])
+        raise AnnotationError(f"存在未匹配结果，strict 模式拒绝保存: {details}")
+    if append_summary:
+        _write_summary(wb, report, source_path, generated)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(output_path)
+    report["generated_at"] = generated
+    return report
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="将 JSON/YAML 自测结果回填到任意 Excel 用例文件")
+    parser.add_argument("--src", required=True, help="源用例文件，支持 .xlsx/.xlsm")
+    result_group = parser.add_mutually_exclusive_group(required=True)
+    result_group.add_argument("--results", help="结果 JSON/YAML 文件")
+    result_group.add_argument("--results-json", help="直接传入结果 JSON 字符串")
+    parser.add_argument("--out", help="输出文件；默认写到源文件旁的 *_AI自测结果.xlsx")
+    parser.add_argument("--evidence-root", help="相对证据路径的根目录")
+    parser.add_argument("--sheet", help="仅处理指定工作表；结果记录中的 sheet 优先")
+    parser.add_argument("--header-row", type=int, help="自定义表头行号；未提供时自动识别常见表头")
+    parser.add_argument("--case-id-column", help="自定义用例 ID 列：列号、Excel 字母或表头文字")
+    parser.add_argument("--case-name-column", help="自定义用例名称列：列号、Excel 字母或表头文字")
+    parser.add_argument("--date", help="统一回填时间；不传则使用当前本地时间")
+    parser.add_argument("--evidence-width", type=int, default=150, help="嵌入证据图片宽度，默认 150px")
+    parser.add_argument("--strict", action="store_true", help="有未匹配结果时拒绝保存")
+    parser.add_argument("--no-summary", action="store_true", help="不生成 🤖AI自测汇总 工作表")
+    return parser
+
+
+def _configure_stdio() -> None:
+    """Windows 默认代码页可能是 GBK，CLI 输出的 AI 列名含 emoji。"""
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    _configure_stdio()
+    args = _build_parser().parse_args(argv)
+    try:
+        if args.results:
+            result_path = Path(args.results).expanduser().resolve()
+            document = _load_result_document(result_path)
+            result_dir = result_path.parent
+        else:
+            try:
+                document = json.loads(args.results_json)
+            except json.JSONDecodeError as exc:
+                raise AnnotationError(f"--results-json 不是合法 JSON: {exc}") from exc
+            result_dir = None
+        report = annotate_workbook(
+            args.src,
+            document,
+            args.out,
+            evidence_root=args.evidence_root,
+            result_dir=result_dir,
+            sheet=args.sheet,
+            header_row=args.header_row,
+            case_id_column=args.case_id_column,
+            case_name_column=args.case_name_column,
+            generated_at=args.date,
+            strict=args.strict,
+            append_summary=not args.no_summary,
+            evidence_width=args.evidence_width,
+        )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+    except (AnnotationError, OSError, TypeError, yaml.YAMLError) as exc:
+        print(f"annotate_excel: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

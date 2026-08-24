@@ -20,6 +20,35 @@ description: AI 驱动 Android App 用 Excel 用例做业务自测——用户�
 6. **测中 · 驱动 + 取证**：照 `references/workflow.md` 的工作流（解析Excel分档→按屏分组→串行驱动→断言+截图→回填）执行；下单类经 `tools/safety/submit_guard.py` 硬校验，`simulated_submit` 模式下走撤单闭环。
 7. **测后 · 结构化反哺**：结束快照+残留校验后，用 `tools/reback.py` 的 `reback_run`（按声明标识字段 upsert，写盘前 schema 校验）把本轮结果合回 `profile.yaml`/`prerequisites.yaml`（带 `last_verified`+`evidence_run`），再用 `tools/derive_docs.py` 重新派生 `画像.md`/`前置条件.md`/`速览.md`；跑 `tools/lint_profile.py` 查重复/跨产物复制/stale/漂移；`tools/metrics.py` 记本批 output/上下文税。
 
+## 结果回填（测后必须执行）
+
+每个已执行/阻塞/跳过的用例都要保留 `sheet` + `row`（Excel 实际行号；没有稳定 ID 时这是唯一定位键），并在运行目录生成 `results.json`。禁止把结果再写入 Python 源码或历史字典。格式如下：
+
+```json
+{
+  "cases": [
+    {
+      "sheet": "工作表名称",
+      "row": 12,
+      "case_id": "可选的用例 ID",
+      "status": "✅通过",
+      "actual": "实测结果或阻塞原因",
+      "tier": "high",
+      "evidence": ["shots/case-12.png"],
+      "tested_at": "2026-08-25"
+    }
+  ]
+}
+```
+
+然后调用：
+
+```bash
+python tools/annotate_excel.py --src <用例文件.xlsx> --results <run>/results.json --out <run>/<用例文件名>_AI自测结果.xlsx --evidence-root <run> --strict
+```
+
+回填命令返回的 JSON 报告中 `matched` 数量必须与本轮结果数一致；若表头不是常见的“用例 ID/用例名称/步骤”等名称，先读取 Excel 结构并补充 `--header-row`、`--case-id-column` 或 `--case-name-column`。检查输出文件存在、源文件未被覆盖，再进入 `reback/derive/lint/metrics`。
+
 ## 护栏
 
 - **hook 硬护栏（自动生效，不用手动遵守）**：`.claude/hooks/guard_git_add.py`（PreToolUse 拦 `git add .`/`-A`/`--all` 与秘密路径提交，见 git-commit skill 硬规则）；`.claude/hooks/context_tax_reminder.py` 的 `assess` 被 `tools/metrics.py` 复用，每批 metrics 算完超阈值即打印提醒（不是 Stop hook——Stop payload 无实时 token/cache）。

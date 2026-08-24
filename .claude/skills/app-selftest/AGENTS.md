@@ -16,7 +16,7 @@ AI 驱动 Android App 用 Excel 用例做业务自测的作业指导。用户给
 4. 测前：用前置任务的 `scope_hash` 冻结 selection，可审计、不临场扩大；
 5. 测前：读 `apps/<app>/env.yaml` 走 `tools/safety/env_auth.verify_env` 定 mode（默认安全降级 confirm_only）；
 6. 测中：按 `references/workflow.md` 串行驱动 + 断言截图，下单类经 `tools/safety/submit_guard.py` 硬校验；
-7. 测后：`tools/reback.py` 反哺画像 → `tools/derive_docs.py` 重派生 md → `tools/lint_profile.py` 查漂移 → `tools/metrics.py` 记 metrics。
+7. 测后：先按 `sheet+row` 生成结构化 `results.json`，执行 `python tools/annotate_excel.py --src <用例.xlsx> --results <run>/results.json --out <run>/标注.xlsx --strict` 自动回填并核对 `matched` 数量；再用 `tools/reback.py` 反哺画像 → `tools/derive_docs.py` 重派生 md → `tools/lint_profile.py` 查漂移 → `tools/metrics.py` 记 metrics。
 
 ## 完整细节
 

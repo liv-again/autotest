@@ -1,0 +1,15 @@
+version: 1
+app: guotou
+
+notes:
+  - key: quote.data_integrity_only
+    scope: quote.validation
+    level: warning
+    when: 行情校验的预期结果中出现“数据正确”“数据一致”或类似表述
+    instruction: 仅校验数据完整性：确认预期字段均有展示、有值、未缺失、未截断或明显乱码
+    do_not_check:
+      - 与外部行情源或人工预期值逐项比对
+      - 不同页面或不同区域之间的数值一致性
+      - 仅凭“数据正确/数据一致”推断数值业务正确
+    result_note: 若没有明确的预期值或权威数据源，只能按数据完整性判定，并在 actual 中注明校验范围
+

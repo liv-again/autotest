@@ -8,6 +8,8 @@
   python droid.py tap  --text "买入"       # 按文本点击（点其可点击祖先的中心）
   python droid.py tap  --id  com.x:id/ok   # 按 resource-id 点击
   python droid.py tap  --xy  630 1400      # 按坐标点击
+  python droid.py tap  --bbox 500 700 620 820  # 点击视觉模型返回的框中心
+  python droid.py dump-xml [out.xml]       # 保存当前 UIAutomator 树
   python droid.py type "512000"            # 输入文本（需先聚焦输入框）
   python droid.py key BACK|HOME|ENTER|DEL  # 按键
   python droid.py swipe 630 2000 630 800 300   # 滑动(默认300ms)
@@ -66,10 +68,15 @@ def _bounds_center(b):
     return ((x1+x2)//2, (y1+y2)//2, x1, y1, x2, y2)
 
 def dump_xml(local=None):
-    adb("shell", "uiautomator", "dump", DEV_XML)
+    rc, _, err = adb("shell", "uiautomator", "dump", DEV_XML)
+    if rc != 0:
+        raise RuntimeError(f"uiautomator dump 失败: {err.strip()}")
     if local is None:
         local = os.path.join(tempfile.gettempdir(), "_droid_dump.xml")
-    adb("pull", DEV_XML, local)
+    rc, _, err = adb("pull", DEV_XML, local)
+    if rc != 0 or not os.path.exists(local):
+        detail = err.strip() or "未生成本地文件"
+        raise RuntimeError(f"adb pull UI 树失败: {detail}")
     with open(local, "r", encoding="utf-8") as f:
         return f.read()
 
@@ -129,6 +136,22 @@ def tap_id(rid):
     e = cand[0]; adb("shell","input","tap",str(e["cx"]),str(e["cy"]))
     print(f"tapped id={rid} @({e['cx']},{e['cy']})"); return 0
 
+def tap_bbox(x1, y1, x2, y2):
+    """点击视觉模型返回的矩形中心；坐标必须来自原始设备截图。"""
+    try:
+        x1, y1, x2, y2 = (int(v) for v in (x1, y1, x2, y2))
+    except (TypeError, ValueError):
+        print("tap: bbox 坐标必须是整数"); return 2
+    if x2 <= x1 or y2 <= y1:
+        print(f"tap: bbox 无效 [{x1},{y1},{x2},{y2}]"); return 2
+    cx = (x1 + x2) // 2
+    cy = (y1 + y2) // 2
+    rc, _, err = adb("shell", "input", "tap", str(cx), str(cy))
+    if rc != 0:
+        print(f"tap: adb 失败: {err.strip()}"); return rc
+    print(f"tapped bbox=[{x1},{y1}][{x2},{y2}] center=({cx},{cy})")
+    return 0
+
 def has(kws):
     """断言：当前屏幕是否出现每个关键词（文本/desc）。返回全部命中则0，否则1。"""
     els = parse(dump_xml())
@@ -153,7 +176,16 @@ def main():
             pass
     if cmd == "current": print(current())
     elif cmd == "wait-device": sys.exit(wait_device())
-    elif cmd in ("screen","dump"): screen()
+    elif cmd == "screen": screen()
+    elif cmd == "dump": screen()
+    elif cmd == "dump-xml":
+        out = sys.argv[2] if len(sys.argv) > 2 else "ui_dump.xml"
+        try:
+            dump_xml(out)
+        except RuntimeError as exc:
+            print(f"ui dump failed: {exc}")
+            sys.exit(1)
+        print(f"ui dump -> {out}")
     elif cmd == "has": sys.exit(has(sys.argv[2:]))
     elif cmd == "find": find(sys.argv[2])
     elif cmd == "tap":
@@ -161,6 +193,12 @@ def main():
         elif "--id" in sys.argv: sys.exit(tap_id(sys.argv[sys.argv.index("--id")+1]))
         elif "--xy" in sys.argv:
             i=sys.argv.index("--xy"); adb("shell","input","tap",sys.argv[i+1],sys.argv[i+2]); print("tapped xy")
+        elif "--bbox" in sys.argv:
+            i = sys.argv.index("--bbox")
+            vals = sys.argv[i+1:i+5]
+            if len(vals) != 4:
+                print("tap: --bbox 需要 x1 y1 x2 y2"); sys.exit(2)
+            sys.exit(tap_bbox(*vals))
     elif cmd == "type":
         txt = sys.argv[2]; adb("shell","input","text",txt); print(f"typed: {txt}")
     elif cmd == "key":

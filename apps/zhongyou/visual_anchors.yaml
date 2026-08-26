@@ -1,0 +1,29 @@
+# App-specific visual semantic catalog.
+# Add reference screenshots under visual/ and keep coordinates out of this file
+# unless they are explicitly versioned evidence/fallbacks.
+version: 1
+app: guojinzhongyou
+anchors:
+  - key: quote.chart_fullscreen
+    meaning: 进入分时图横屏/全屏模式
+    screen: quote.detail
+    visual_description: 图表区域右下角的全屏图标
+    nearby_text: ""
+    reference_image: visual/quote_fullscreen.png
+    action: tap_center
+    verify_after:
+      orientation: landscape
+    last_verified: "2026-08-26"
+    app_version: "8.05.001"
+
+  - key: quote.chart_portrait
+    meaning: 切换分时图竖屏模式
+    screen: quote.detail
+    visual_description: 横屏分时图区域右下角的竖屏图标
+    nearby_text: ""
+    reference_image: visual/quote_portrait.png
+    action: tap_center
+    verify_after:
+      orientation: portrait
+    last_verified: "2026-08-26"
+    app_version: "8.05.001"

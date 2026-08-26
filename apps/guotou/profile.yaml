@@ -1,0 +1,26 @@
+slug: guotou
+app_version: 10.5.4
+entries:
+- key: quote.guzhi_list
+  path: 行情→股指
+  last_verified: '2026-08-10'
+  app_version: 9.02.10
+  evidence_run: seed-from-guojin
+  status: unverified
+- key: quote.hsj_stock_list
+  path: 行情→A股→沪深京
+  last_verified: '2026-08-10'
+  app_version: 9.02.10
+  evidence_run: seed-from-guojin
+  status: unverified
+capabilities:
+- key: cap.quote.refresh_check
+  supported: true
+  note: >-
+    行情刷新校验方式：先截取第一张截图，记录预期结果中指定的数据；等待5秒后截取第二张截图，
+    仅对比指定数据是否发生变化。若发生变化，继续后续校验；若未变化，再截取第三张截图，
+    若仍未变化则将该校验标记为跳过，不判定为失败。actual中注明实际对比的数据和重试结果。
+  last_verified: '2026-08-27'
+  app_version: 10.5.4
+  status: unverified
+verified_chains: []

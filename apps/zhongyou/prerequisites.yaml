@@ -1,4 +1,46 @@
 slug: zhongyou
-account_capabilities: []
-instrument_properties: []
-known_codes: []
+account_capabilities:
+- alias: pt
+  type: 普通
+  capabilities:
+  - 北交所交易
+  - 全权限
+  mask: '***0219'
+instrument_properties:
+- code: '920001'
+  name: 上市01
+  props:
+  - 北交所退市整理股
+  - 退市整理期
+- code: '920002'
+  name: 上市02
+  props:
+  - 北交所风险警示股
+  - 退市整理期
+known_codes:
+- code: '920001'
+  name: 上市01
+  market: 北交所
+  attributes:
+    market: 北交所
+    product: 股票
+    t0: false
+    has_nav: false
+    has_holding: false
+    orderbook_depth: true
+    collateral_eligible: false
+    financing_eligible: false
+    in_subscription: false
+- code: '920002'
+  name: 上市02
+  market: 北交所
+  attributes:
+    market: 北交所
+    product: 股票
+    t0: false
+    has_nav: false
+    has_holding: false
+    orderbook_depth: true
+    collateral_eligible: false
+    financing_eligible: false
+    in_subscription: false

@@ -1,0 +1,17 @@
+slug: guotou
+packages:
+- com.hexin.plat.android.AnxinSecurity
+verified_versions:
+- version: V10.5.4
+  verified_at: '2026-08-27'
+compatibility:
+  min: V10.5.4
+  max_exclusive: V10.5.5
+test_accounts: []
+environment: env.yaml
+profile: profile.yaml
+prerequisites: prerequisites.yaml
+aliases:
+- 国投证券
+- 安信证券
+- 国投

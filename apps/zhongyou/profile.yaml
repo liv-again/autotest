@@ -2,11 +2,11 @@ slug: zhongyou
 app_version: 9.07.04
 entries:
 - key: trade.putong.buy
-  path: 交易→买入；代码auto_stockcode(输码后点stock_code_tv/stock_name_tv选中回填)；价格stockprice+content_price_sub/content_price_add(±0.001)；跌停dietingprice/涨停zhangtingprice；数量stockvolume+stockvolume_sub/stockvolume_add；仓位all_chicang/half_chicang/one_third_chicang/one_four_chicang；限价/市价切换b_xianjia_weituo+市价委托策略spinner_shijia_weituo(保护限价复用stockprice)；提交btn_transaction(买入)；确认框dialog_title(买入委托)/prompt_content/ok_btn(确认买入)/cancel_btn；结果框prompt_content(委托已提交,合同号为:X)/ok_btn(确定)
-  last_verified: '2026-07-29'
-  app_version: 8.05.001
-  evidence_run: seed-from-guojin
-  status: unverified
+  path: 交易→买入；代码auto_stockcode(输码后点stock_name_tv选中回填)；价格stockprice+content_price_sub/content_price_add；跌停dietingprice/涨停zhangtingprice；数量stockvolume+stockvolume_sub/stockvolume_add；仓位all_chicang/half_chicang/one_third_chicang/one_four_chicang；限价/市价切换b_xianjia_weituo；提交btn_transaction；确认框dialog_title(买入委托)/prompt_content/ok_btn(确认买入)/cancel_btn；风险警示弹框dialog_title(提示)/prompt_content(终止上市提示)/ok_btn(确认)/cancel_btn(取消)
+  last_verified: '2026-08-19'
+  app_version: 9.07.04
+  evidence_run: 2026-08-19-zhongyou-fxjs
+  status: verified
 - key: trade.putong.sell
   path: 交易→卖出；同trade.putong.buy控件id体系(auto_stockcode/stockprice/stockvolume/仓位键)；提交btn_transaction(卖出)；确认框dialog_title(卖出委托)/ok_btn(确认卖出)
   last_verified: '2026-07-29'
@@ -16,24 +16,6 @@ entries:
 - key: trade.putong.cancel
   path: 交易→撤单/下单菜单→撤单查询；撤单列表codelist→行result0..result7(名称/时间/委托价/均价/委托量/成交量/方向/状态)；撤单确认框标题「撤单信息」/ok_btn(确定)【此框挡uiautomator
     dump,截图正常】；结果「撤单已提交」
-  last_verified: '2026-07-29'
-  app_version: 8.05.001
-  evidence_run: seed-from-guojin
-  status: unverified
-- key: trade.flash.buy
-  path: 详情页底部xiadan「下单」(≈483,2800)→菜单flash_buy_imageview闪电买入(紧凑覆盖面板,canvas无id,价格/数量/仓位/买入键只能坐标点击,displayed×1.42=real)
-  last_verified: '2026-07-29'
-  app_version: 8.05.001
-  evidence_run: seed-from-guojin
-  status: unverified
-- key: trade.flash.sell
-  path: 详情页底部xiadan「下单」→菜单flash_sale_imageview闪电卖出(同trade.flash.buy坐标体系)
-  last_verified: '2026-07-29'
-  app_version: 8.05.001
-  evidence_run: seed-from-guojin
-  status: unverified
-- key: trade.xsb.buy
-  path: 交易→新三板交易；首页网格tv_gz_type=买入/卖出/撤单/持仓/委托查询/成交查询；代码tv_auto_stock_code(输码后点下拉stock_code_tv或键盘「确定」键回填)→tv_stock_name；价格et_stock_price；跌/涨停tv_down_limit_price/tv_up_limit_price；数量et_stock_volume；可买tv_available_transaction_number；申报类型tv_declaration_type(集合竞价+连续竞价)；市价切换=点价格旁「限价」按钮弹框选市价买/卖；提交btn_transaction(限价买入)；确认框dialog_title(股转买入确认)/ok_btn(确认买入)
   last_verified: '2026-07-29'
   app_version: 8.05.001
   evidence_run: seed-from-guojin
@@ -63,17 +45,17 @@ entries:
   evidence_run: seed-from-guojin
   status: unverified
 - key: quote.detail
-  path: 首页搜索search_layout(tips=请输入代码或简拼)→输整码自动进个股详情；详情页tab=分时(91,624)/日K/周K/月K/五日/更多▼(more)/⚙设置(setting,≈1192,624)；报价头(现价/高/低/开区)点击→弹简报价面板
-  last_verified: '2026-07-29'
-  app_version: 8.05.001
-  evidence_run: seed-from-guojin
-  status: unverified
+  path: 首页搜索search_layout(tips=请输入代码或简拼)→输整码自动进个股详情；详情页tab=分时/日K/周K/月K/五日/更多▼/⚙设置；报价头(现价/高/低/开区)点击→弹简报价面板(fenshi_headline_view)；简报价面板字段：涨停/跌停/量比/最高/最低/均价/总手/振幅/成交额/交易方式/交易状态/做市商数量/表决权差异/盘后量等
+  last_verified: '2026-08-19'
+  app_version: 9.07.04
+  evidence_run: 2026-08-19-zhongyou-fxjs
+  status: verified
 - key: quote.brief
-  path: 简报价面板(12字段)：涨停/跌停/外盘/内盘/振幅/总手/量比/委比/申购/赎回/做市商数量/证券简称(扩)=扩位简称
-  last_verified: '2026-07-29'
-  app_version: 8.05.001
-  evidence_run: seed-from-guojin
-  status: unverified
+  path: 简报价面板：涨停/跌停/量比/最高/最低/均价/总手/振幅/成交额/交易方式(集合竞价+连续竞价)/交易状态/做市商数量/表决权差异/盘后量。⚠️未观察到'退市剩余交易日'和'最后交易日'字段
+  last_verified: '2026-08-19'
+  app_version: 9.07.04
+  evidence_run: 2026-08-19-zhongyou-fxjs
+  status: verified
 - key: quote.iopv
   path: 分时⚙→分时设置底部弹层：买卖盘委托单显示金额/盘口买卖档位量柱/IOPV线(item_switch)/全部设置
   last_verified: '2026-07-29'
@@ -98,5 +80,56 @@ entries:
   app_version: 9.02.10
   evidence_run: seed-from-guojin
   status: unverified
-capabilities: []
+- key: quote.fxjs_list
+  path: 行情→其他→风险警示；列表表头(最新/涨幅/涨跌可排序)；列表行dragablelistview(代码/名称/最新价/涨幅/涨跌/量比/振幅等)；id=dragable_listview
+  last_verified: '2026-08-19'
+  app_version: 9.07.04
+  evidence_run: 2026-08-19-zhongyou-fxjs
+  status: verified
+- key: quote.tszl_list
+  path: 行情→其他→退市整理；列表结构同风险警示；id=dragable_listview；可看到920001(上市01)等退市整理标的
+  last_verified: '2026-08-19'
+  app_version: 9.07.04
+  evidence_run: 2026-08-19-zhongyou-fxjs
+  status: verified
+- key: trade.xsb.buy
+  path: 交易→新三板交易(菜单menu_name=新三板交易)；首页网格iv_menu_icon+tv_title=买入/卖出/撤单/持仓/查询；代码component_stock_code(输码弹搜索框auto_stockcode→点stockname_tv回填)；价格et_input+rl_minus/rl_plus(±微调)；跌/涨停kvv_stock_price_min(tv_internal_key=跌停)/kvv_stock_price_max(tv_internal_key=涨停)；数量et_input；可买tv_could_buy；仓位btn_position_all/half/one_third/quarter；提交按钮待验证；确认框待验证
+  last_verified: '2026-08-19'
+  app_version: 9.07.04
+  evidence_run: 2026-08-19-zhongyou-fxjs
+  status: unverified
+- key: trade.flash.buy
+  path: 详情页底部xiadan(id=xiadan,≈415,2263)→菜单flash_buy_imageview闪电买入/id=flash_sale_imageview闪电卖出/id=chedan_imageview撤单查询；闪电面板为canvas覆盖层,dump不到子元素,需坐标点击(displayed×1.42=real校准)
+  last_verified: '2026-08-19'
+  app_version: 9.07.04
+  evidence_run: 2026-08-19-zhongyou-fxjs
+  status: unverified
+- key: trade.flash.sell
+  path: 同trade.flash.buy,点flash_sale_imageview闪电卖出
+  last_verified: '2026-08-19'
+  app_version: 9.07.04
+  evidence_run: 2026-08-19-zhongyou-fxjs
+  status: unverified
+capabilities:
+- key: fxjs.buy_risk_warning
+  supported: true
+  note: 支持买入北交所风险警示股票(如920002)，回填数据正确，触发风险警示弹框
+  last_verified: '2026-08-19'
+  app_version: 9.07.04
+  evidence_run: 2026-08-19-zhongyou-fxjs
+  status: verified
+- key: fxjs.buy_delisting
+  supported: true
+  note: 支持买入北交所退市整理股票(如920001)，回填数据正确，触发风险警示弹框
+  last_verified: '2026-08-19'
+  app_version: 9.07.04
+  evidence_run: 2026-08-19-zhongyou-fxjs
+  status: verified
+- key: fxjs.risk_warning_dialog
+  supported: true
+  note: 买入风险警示/退市整理股票时弹出风险提示弹框，文案包含'被交易所终止上市,进入退市整理期交易'等信息
+  last_verified: '2026-08-19'
+  app_version: 9.07.04
+  evidence_run: 2026-08-19-zhongyou-fxjs
+  status: verified
 verified_chains: []

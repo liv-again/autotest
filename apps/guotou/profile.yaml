@@ -44,10 +44,10 @@ entries:
   evidence_run: outputs/2026-08-27-guotou-full
   status: verified
 - key: quote.kline
-  path: 行情→其他→上证A股→任一股票→点击分时图全屏入口；横屏周期：分时/5日/日K/周K/月K/分钟；右上角X返回；竖屏底栏：周期/指标/更多
-  last_verified: '2026-08-27'
+  path: 行情列表→任一股票→个股分时页左滑可切换至K线页面；也可点击分时图全屏入口；横屏周期：分时/5日/日K/周K/月K/分钟；右上角X返回；竖屏底栏：周期/指标/更多
+  last_verified: '2026-09-01'
   app_version: V10.5.4
-  evidence_run: outputs/2026-08-27-guotou-full/shots-r2
+  evidence_run: user-confirmed/2026-09-01
   status: verified
 - key: quote.sector_lists
   path: 行情→板块→行业板块更多→板块列表；顶部可切换全部板块/行业板块/概念板块/地域板块；右上角搜索；表头涨幅/领涨股/涨速可交互

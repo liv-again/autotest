@@ -1,0 +1,20 @@
+selected_ids:
+  - RISK-001
+  - RISK-004
+  - RISK-007
+skipped_ids:
+  - id: RISK-002
+    reason: 默认只测 high；附件优先级为 middle
+  - id: RISK-003
+    reason: 默认只测 high；附件优先级为 middle
+  - id: RISK-005
+    reason: 默认只测 high；附件优先级为 middle
+  - id: RISK-006
+    reason: 默认只测 high；附件优先级为 middle
+  - id: RISK-008
+    reason: 默认只测 high；附件优先级为 middle
+  - id: RISK-009
+    reason: 默认只测 high；附件优先级为 middle
+incidental_ids: []
+priority_source: 附件“风险警示需求”页优先级列
+scope_hash: 4f9dc834b72ae969699c9f63eb5e6916cb2f97c66654425de57e6d018865b374

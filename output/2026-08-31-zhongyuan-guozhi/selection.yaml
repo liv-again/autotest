@@ -1,0 +1,54 @@
+# 前置任务冻结范围：原始「股指」工作表的 P0 映射为 high；P1/P2 本轮跳过。
+selected_ids:
+  - TC_国内指数列表数据正确展示
+  - TC_国内指数列表横屏滑动功能正常
+  - TC_国内指数列表切换横屏数据正常展示
+  - TC_国内指数列表切换竖屏数据正常展示
+  - TC_查看股指期货列表数据
+  - TC_上下左右滑动列表数据
+  - TC_主界面股指期货展示正确
+  - TC_查看其他指数列表数据
+  - TC_将手机横放
+  - TC_将手机竖放
+  - TC_上下左右滑动列表数据_其他指数
+skipped_ids:
+  - {id: TC_更多页面跳转国内股指列表页面, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_国内股指列表页跳转股指tab页, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_股指tab页跳转搜索界面, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_搜索页面跳转股指tab页, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_国内指数列表滑动功能正常, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_国内指数列表横屏跳转指数个股分时横屏界面, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_指数个股分时横屏界面跳转国内指数列表横屏, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_个股详情界面跳转国内股指列表页, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_国内指数列表跳转其余指数个股行情界面, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_国内指数列表跳转任意指数A个股行情界面, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_国内指数列表页跳转搜索界面, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_搜索页面跳转国内指数列表页, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_国内股指主页面跳转指数个股界面, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_指数个股界面跳转国内股指主页面, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_国内股指界面正确展示, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_股指期货列表页返回股指tab页, reason: "P2→low，默认 high 范围外"}
+  - {id: TC_主页面跳转股指期货列表页面, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_隐藏股指期货介绍, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_股指期货介绍页面正常显示, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_点击标题沪深300/上证50/中证500, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_个股详情界面返回股指期货列表, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_股指期货界面跳转任意股指界面, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_股指期货列表跳转搜索界面, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_搜索界面返回股指期货列表, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_股指期货主页面股票跳转股指A个股行情界面, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_点击更多按钮, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_其他指数列表页返回股指tab页, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_上下左右滑动列表数据, reason: "P1→middle，默认 high 范围外；原表行37"}
+  - {id: TC_点击分时横屏界面右上角的X按钮, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_点击列表中的任意一只股票, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_点击股票搜索框左上角的返回按钮, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_点击页面右上角的搜索按钮, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_点击任意一指数, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_个股详情界面返回其他指数列表, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_点击页面左上角的返回按钮, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_其他指数主界面跳转指数个股行情界面, reason: "P1→middle，默认 high 范围外"}
+  - {id: TC_主页面其他指数展示正常, reason: "P1→middle，默认 high 范围外"}
+incidental_ids: []
+priority_source: "原始 Excel 股指!F2:F49：P0→high、P1→middle、P2→low；默认仅执行 high"
+scope_hash: c89c206f43eea4188637991a4846cfc0a4fe12352d95d01ae5b8f444065f60ae

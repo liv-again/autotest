@@ -1,0 +1,37 @@
+{
+  "cases": [
+    {
+      "sheet": "风险警示需求",
+      "row": 2,
+      "case_id": "RISK-001",
+      "case_name": "TC_详细报价字段显示正确",
+      "tier": "high",
+      "status": "🟡待数据",
+      "actual": "无法验证详细报价字段：当前“退市整理”列表为空，缺少可进入详情页的京市退市整理标的",
+      "evidence": ["shots/delisting_empty.png"],
+      "tested_at": "2026-08-23"
+    },
+    {
+      "sheet": "风险警示需求",
+      "row": 5,
+      "case_id": "RISK-004",
+      "case_name": "TC_盘口字段显示正确",
+      "tier": "high",
+      "status": "🟡待数据",
+      "actual": "无法验证盘口字段：当前“退市整理”列表为空，缺少可进入详情页的京市退市整理标的",
+      "evidence": ["shots/delisting_empty.png"],
+      "tested_at": "2026-08-23"
+    },
+    {
+      "sheet": "风险警示需求",
+      "row": 8,
+      "case_id": "RISK-007",
+      "case_name": "TC_详细报价字段显示正确（横屏）",
+      "tier": "high",
+      "status": "🟡待数据",
+      "actual": "无法验证横屏详细报价字段：当前“退市整理”列表为空，缺少可进入详情页的京市退市整理标的",
+      "evidence": ["shots/delisting_empty.png"],
+      "tested_at": "2026-08-23"
+    }
+  ]
+}

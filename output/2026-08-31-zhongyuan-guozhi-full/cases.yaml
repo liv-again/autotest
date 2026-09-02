@@ -1,0 +1,951 @@
+cases:
+- tc_id: 股指!2:TC_更多页面跳转国内股指列表页面
+  title: TC_更多页面跳转国内股指列表页面
+  case_name: TC_更多页面跳转国内股指列表页面
+  source:
+    sheet: 股指
+    row: 2
+  section: 国内指数
+  feature: 更多页面可跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 国内指数主界面
+  precondition: ''
+  action: '进入股指--国内指数
+
+    点击更多按钮'
+  params: ''
+  expected: 跳转进入国内股指列表页面
+- tc_id: 股指!3:TC_国内股指列表页跳转股指tab页
+  title: TC_国内股指列表页跳转股指tab页
+  case_name: TC_国内股指列表页跳转股指tab页
+  source:
+    sheet: 股指
+    row: 3
+  section: 国内指数
+  feature: 更多页面可跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 国内股指列表页
+  precondition: ''
+  action: '进入股指--国内指数
+
+    点击页面左上角的返回按钮'
+  params: ''
+  expected: 正常返回到“股指”tab页
+- tc_id: 股指!4:TC_股指tab页跳转搜索界面
+  title: TC_股指tab页跳转搜索界面
+  case_name: TC_股指tab页跳转搜索界面
+  source:
+    sheet: 股指
+    row: 4
+  section: 国内指数
+  feature: 股指tab页搜索功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 指数tab页
+  precondition: ''
+  action: '进入股指--国内指数
+
+    点击页面右上角的搜索按钮'
+  params: ''
+  expected: 跳转到搜索界面，搜索功能同正常的股票搜索
+- tc_id: 股指!5:TC_搜索页面跳转股指tab页
+  title: TC_搜索页面跳转股指tab页
+  case_name: TC_搜索页面跳转股指tab页
+  source:
+    sheet: 股指
+    row: 5
+  section: 国内指数
+  feature: 股指tab页搜索功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 搜索页
+  precondition: ''
+  action: '进入股指--国内指数
+
+    点击页面左上角的返回按钮'
+  params: ''
+  expected: 返回到“股指”tab页首页
+- tc_id: 股指!6:TC_国内指数列表滑动功能正常
+  title: TC_国内指数列表滑动功能正常
+  case_name: TC_国内指数列表滑动功能正常
+  source:
+    sheet: 股指
+    row: 6
+  section: 国内指数
+  feature: 列表测试功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 国内指数列表页
+  precondition: ''
+  action: '进入股指--国内指数
+
+    上下左右滑动列表数据'
+  params: ''
+  expected: 滑动正常，数据加载正常
+- tc_id: 股指!7:TC_国内指数列表数据正确展示
+  title: TC_国内指数列表数据正确展示
+  case_name: TC_国内指数列表数据正确展示
+  source:
+    sheet: 股指
+    row: 7
+  section: 国内指数
+  feature: 列表测试功能
+  priority: high
+  source_priority: P0
+  entry: ''
+  step: 国内指数列表页
+  precondition: ''
+  action: '进入股指--国内指数
+
+    查看国内指数列表数据'
+  params: ''
+  expected: '1、数据展示正确，与自运营对比一致
+
+    2、数字字体颜色：涨红跌绿
+
+    3、展示字段：最新、涨幅、涨跌、量比、振幅、金额、总手'
+- tc_id: 股指!8:TC_国内指数列表横屏滑动功能正常
+  title: TC_国内指数列表横屏滑动功能正常
+  case_name: TC_国内指数列表横屏滑动功能正常
+  source:
+    sheet: 股指
+    row: 8
+  section: 国内指数
+  feature: 列表支持横竖屏切换功能
+  priority: high
+  source_priority: P0
+  entry: ''
+  step: 手机已开启自动旋转功能，横屏
+  precondition: ''
+  action: '进入股指--国内指数
+
+    上下左右滑动列表数据'
+  params: ''
+  expected: 滑动正常
+- tc_id: 股指!9:TC_国内指数列表横屏跳转指数个股分时横屏界面
+  title: TC_国内指数列表横屏跳转指数个股分时横屏界面
+  case_name: TC_国内指数列表横屏跳转指数个股分时横屏界面
+  source:
+    sheet: 股指
+    row: 9
+  section: 国内指数
+  feature: 列表支持横竖屏切换功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 手机已开启自动旋转功能，横屏
+  precondition: ''
+  action: '进入股指--国内指数
+
+    点击列表中的任意一只股票'
+  params: ''
+  expected: '1、跳转到该指数个股分时横屏界面
+
+    2、右侧不展示买卖盘
+
+    3、其余测试点同沪深A股'
+- tc_id: 股指!10:TC_国内指数列表切换横屏数据正常展示
+  title: TC_国内指数列表切换横屏数据正常展示
+  case_name: TC_国内指数列表切换横屏数据正常展示
+  source:
+    sheet: 股指
+    row: 10
+  section: 国内指数
+  feature: 列表支持横竖屏切换功能
+  priority: high
+  source_priority: P0
+  entry: ''
+  step: 手机已开启自动旋转功能，横屏
+  precondition: ''
+  action: '进入股指--国内指数
+
+    将手机横放'
+  params: ''
+  expected: 转换为横屏模式，页面及数据展示正常
+- tc_id: 股指!11:TC_国内指数列表切换竖屏数据正常展示
+  title: TC_国内指数列表切换竖屏数据正常展示
+  case_name: TC_国内指数列表切换竖屏数据正常展示
+  source:
+    sheet: 股指
+    row: 11
+  section: 国内指数
+  feature: 列表支持横竖屏切换功能
+  priority: high
+  source_priority: P0
+  entry: ''
+  step: 手机已开启自动旋转功能，横屏
+  precondition: ''
+  action: '进入股指--国内指数
+
+    将手机竖放'
+  params: ''
+  expected: 正常切换到竖屏界面，页面/数据显示正常
+- tc_id: 股指!12:TC_指数个股分时横屏界面跳转国内指数列表横屏
+  title: TC_指数个股分时横屏界面跳转国内指数列表横屏
+  case_name: TC_指数个股分时横屏界面跳转国内指数列表横屏
+  source:
+    sheet: 股指
+    row: 12
+  section: 国内指数
+  feature: 列表支持横竖屏切换功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 手机已开启自动旋转功能，横屏
+  precondition: ''
+  action: '进入股指--国内指数
+
+    点击分时横屏界面右上角的X按钮'
+  params: ''
+  expected: 返回到列表横屏界面
+- tc_id: 股指!13:TC_个股详情界面跳转国内股指列表页
+  title: TC_个股详情界面跳转国内股指列表页
+  case_name: TC_个股详情界面跳转国内股指列表页
+  source:
+    sheet: 股指
+    row: 13
+  section: 国内指数
+  feature: 其余指数跳转显示功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 个股详情界面
+  precondition: ''
+  action: '进入股指--国内指数
+
+    点击页面左上角的返回按钮'
+  params: ''
+  expected: 正常返回到国内股指列表页
+- tc_id: 股指!14:TC_国内指数列表跳转其余指数个股行情界面
+  title: TC_国内指数列表跳转其余指数个股行情界面
+  case_name: TC_国内指数列表跳转其余指数个股行情界面
+  source:
+    sheet: 股指
+    row: 14
+  section: 国内指数
+  feature: 其余指数跳转显示功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 国内指数列表页
+  precondition: ''
+  action: '进入股指--国内指数
+
+    点击其余的任意一指数'
+  params: ''
+  expected: '1、跳转到该指数个股行情界面，下方默认展示“新闻”tab页
+
+    2、分时界面不展示买卖盘
+
+    3、下方展示tab页：新闻、盘口
+
+    4、左下角不展示沪深创大盘
+
+    5、不支持闪电下单'
+- tc_id: 股指!15:TC_国内指数列表跳转任意指数A个股行情界面
+  title: TC_国内指数列表跳转任意指数A个股行情界面
+  case_name: TC_国内指数列表跳转任意指数A个股行情界面
+  source:
+    sheet: 股指
+    row: 15
+  section: 国内指数
+  feature: 任意指数A功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 国内指数列表页
+  precondition: ''
+  action: '进入股指--国内指数
+
+    点击指数A'
+  params: ''
+  expected: '1、跳转到A指数个股行情界面
+
+    2、分时界面不展示买卖盘
+
+    3、下方展示tab页：新闻、盘口，默认展示“新闻”tab页
+
+    4、左下角不展示沪深创大盘
+
+    5、不支持闪电下单'
+- tc_id: 股指!16:TC_国内指数列表页跳转搜索界面
+  title: TC_国内指数列表页跳转搜索界面
+  case_name: TC_国内指数列表页跳转搜索界面
+  source:
+    sheet: 股指
+    row: 16
+  section: 国内指数
+  feature: 搜索界面跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 国内指数列表页
+  precondition: ''
+  action: '进入股指--国内指数
+
+    点击页面右上角的搜索按钮'
+  params: ''
+  expected: 跳转到搜索股票界面
+- tc_id: 股指!17:TC_搜索页面跳转国内指数列表页
+  title: TC_搜索页面跳转国内指数列表页
+  case_name: TC_搜索页面跳转国内指数列表页
+  source:
+    sheet: 股指
+    row: 17
+  section: 国内指数
+  feature: 搜索界面跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 搜索页面
+  precondition: ''
+  action: '进入股指--国内指数
+
+    点击股票搜索框左上角的返回按钮'
+  params: ''
+  expected: 返回到国内指数列表页
+- tc_id: 股指!18:TC_国内股指主页面跳转指数个股界面
+  title: TC_国内股指主页面跳转指数个股界面
+  case_name: TC_国内股指主页面跳转指数个股界面
+  source:
+    sheet: 股指
+    row: 18
+  section: 国内指数
+  feature: 主界面股票点击跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 国内指数主界面
+  precondition: ''
+  action: '进入股指--国内指数
+
+    点击六宫格中的任意一个指数'
+  params: ''
+  expected: '1、跳转到该指数个股行情分时界面
+
+    2、分时界面不展示买卖盘
+
+    3、下方展示tab页：新闻、盘口，默认展示“新闻”tab页
+
+    4、左下角不展示沪深创大盘
+
+    5、不支持闪电下单'
+- tc_id: 股指!19:TC_指数个股界面跳转国内股指主页面
+  title: TC_指数个股界面跳转国内股指主页面
+  case_name: TC_指数个股界面跳转国内股指主页面
+  source:
+    sheet: 股指
+    row: 19
+  section: 国内指数
+  feature: 主界面股票点击跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 指数个股详情界面
+  precondition: ''
+  action: '进入股指--国内指数
+
+    点击页面左上角的返回按钮'
+  params: ''
+  expected: 返回到“股指”tab页首页
+- tc_id: 股指!20:TC_国内股指界面正确展示
+  title: TC_国内股指界面正确展示
+  case_name: TC_国内股指界面正确展示
+  source:
+    sheet: 股指
+    row: 20
+  section: 国内指数
+  feature: 主界面展示功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 行情-股指界面
+  precondition: ''
+  action: '进入股指--国内指数
+
+    查看国内指数模块展示'
+  params: ''
+  expected: '1、展示为六宫格形式，符合UI/设计稿
+
+    2、每一格展示：股票名称、最新价、最新涨跌、最新涨幅；数据与自运营对比一致，与该只股票个股行情界面数据一致
+
+    3、数据字体颜色：涨红跌绿
+
+    4、模块标题为“国内指数”，标题右侧展示“更多”按钮'
+- tc_id: 股指!21:TC_股指期货列表页返回股指tab页
+  title: TC_股指期货列表页返回股指tab页
+  case_name: TC_股指期货列表页返回股指tab页
+  source:
+    sheet: 股指
+    row: 21
+  section: 股指期货
+  feature: 更多页面可跳转功能
+  priority: low
+  source_priority: P2
+  entry: ''
+  step: 股指期货列表页
+  precondition: ''
+  action: '进入股指--股指期货
+
+    点击页面左上角的返回按钮'
+  params: ''
+  expected: 正常返回到“股指”tab页
+- tc_id: 股指!22:TC_主页面跳转股指期货列表页面
+  title: TC_主页面跳转股指期货列表页面
+  case_name: TC_主页面跳转股指期货列表页面
+  source:
+    sheet: 股指
+    row: 22
+  section: 股指期货
+  feature: 更多页面可跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: ''
+  precondition: ''
+  action: '进入股指--股指期货
+
+    点击更多按钮'
+  params: ''
+  expected: 跳转进入股指期货列表页
+- tc_id: 股指!23:TC_隐藏股指期货介绍
+  title: TC_隐藏股指期货介绍
+  case_name: TC_隐藏股指期货介绍
+  source:
+    sheet: 股指
+    row: 23
+  section: 股指期货
+  feature: 股指期货介绍可隐藏功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: ''
+  precondition: ''
+  action: '进入股指--股指期货
+
+    点击股指期货介绍右侧的X按钮'
+  params: ''
+  expected: 股指期货介绍一行隐藏
+- tc_id: 股指!24:TC_股指期货介绍页面正常显示
+  title: TC_股指期货介绍页面正常显示
+  case_name: TC_股指期货介绍页面正常显示
+  source:
+    sheet: 股指
+    row: 24
+  section: 股指期货
+  feature: 股指期货介绍页面显示功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: ''
+  precondition: ''
+  action: '进入股指--股指期货
+
+    点击i标志或股指期货介绍一行'
+  params: ''
+  expected: 可跳转股指期货介绍页面，内容正常显示
+- tc_id: 股指!25:TC_查看股指期货列表数据
+  title: TC_查看股指期货列表数据
+  case_name: TC_查看股指期货列表数据
+  source:
+    sheet: 股指
+    row: 25
+  section: 股指期货
+  feature: 列表测试功能
+  priority: high
+  source_priority: P0
+  entry: ''
+  step: 数据已展开
+  precondition: ''
+  action: '进入股指--股指期货
+
+    查看股指期货列表数据'
+  params: ''
+  expected: 数据展示正确，与自运营对比一致
+- tc_id: 股指!26:TC_点击标题沪深300/上证50/中证500
+  title: TC_点击标题沪深300/上证50/中证500
+  case_name: TC_点击标题沪深300/上证50/中证500
+  source:
+    sheet: 股指
+    row: 26
+  section: 股指期货
+  feature: 列表测试功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 股指期货列表页
+  precondition: ''
+  action: '进入股指--股指期货
+
+    点击标题沪深300/上证50/中证500'
+  params: ''
+  expected: 可以正常收起/展开该模块列表数据
+- tc_id: 股指!27:TC_上下左右滑动列表数据
+  title: TC_上下左右滑动列表数据
+  case_name: TC_上下左右滑动列表数据
+  source:
+    sheet: 股指
+    row: 27
+  section: 股指期货
+  feature: 列表测试功能
+  priority: high
+  source_priority: P0
+  entry: ''
+  step: 数据已展开
+  precondition: ''
+  action: '进入股指--股指期货
+
+    上下左右滑动列表数据'
+  params: ''
+  expected: 滑动正常，数据加载正常
+- tc_id: 股指!28:TC_个股详情界面返回股指期货列表
+  title: TC_个股详情界面返回股指期货列表
+  case_name: TC_个股详情界面返回股指期货列表
+  source:
+    sheet: 股指
+    row: 28
+  section: 股指期货
+  feature: 任意指数功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 个股详情界面
+  precondition: ''
+  action: '进入股指--股指期货
+
+    点击页面左上角的返回按钮'
+  params: ''
+  expected: 正常返回到股指期货列表页
+- tc_id: 股指!29:TC_股指期货界面跳转任意股指界面
+  title: TC_股指期货界面跳转任意股指界面
+  case_name: TC_股指期货界面跳转任意股指界面
+  source:
+    sheet: 股指
+    row: 29
+  section: 股指期货
+  feature: 任意指数功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: ''
+  precondition: ''
+  action: '进入股指--股指期货
+
+    点击任意股指'
+  params: ''
+  expected: '1、跳转到股指个股行情界面，下方展示tab页：新闻、盘口；默认展示“新闻”tab页
+
+    2、数据与各自自运营数据对比一致
+
+    3、分时图右侧展示买一卖一价买卖盘，数据与自运营一致
+
+    4、不支持闪电下单
+
+    5、其余测试点参照沪深个股'
+- tc_id: 股指!30:TC_股指期货列表跳转搜索界面
+  title: TC_股指期货列表跳转搜索界面
+  case_name: TC_股指期货列表跳转搜索界面
+  source:
+    sheet: 股指
+    row: 30
+  section: 股指期货
+  feature: 搜索界面跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 股指期货列表页
+  precondition: ''
+  action: '进入股指--股指期货
+
+    点击页面右上角的搜索按钮'
+  params: ''
+  expected: 1、跳转到搜索股票界面
+- tc_id: 股指!31:TC_搜索界面返回股指期货列表
+  title: TC_搜索界面返回股指期货列表
+  case_name: TC_搜索界面返回股指期货列表
+  source:
+    sheet: 股指
+    row: 31
+  section: 股指期货
+  feature: 搜索界面跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 股票搜索界面
+  precondition: ''
+  action: '进入股指--股指期货
+
+    点击股票搜索框左上角的返回按钮'
+  params: ''
+  expected: 返回到股指期货列表页
+- tc_id: 股指!32:TC_股指期货主页面股票跳转股指A个股行情界面
+  title: TC_股指期货主页面股票跳转股指A个股行情界面
+  case_name: TC_股指期货主页面股票跳转股指A个股行情界面
+  source:
+    sheet: 股指
+    row: 32
+  section: 股指期货
+  feature: 主界面股票点击跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 股指期货主界面
+  precondition: ''
+  action: '进入股指--股指期货
+
+    点击三宫格中的任意一个指数'
+  params: ''
+  expected: '1、跳转到股指A个股行情界面，下方展示tab页：新闻、盘口；默认展示“新闻”tab页
+
+    2、数据与各自自运营数据对比一致
+
+    3、分时图右侧展示买一卖一价买卖盘，数据与自运营一致
+
+    4、不支持闪电下单'
+- tc_id: 股指!33:TC_主界面股指期货展示正确
+  title: TC_主界面股指期货展示正确
+  case_name: TC_主界面股指期货展示正确
+  source:
+    sheet: 股指
+    row: 33
+  section: 股指期货
+  feature: 主界面展示功能
+  priority: high
+  source_priority: P0
+  entry: ''
+  step: ''
+  precondition: ''
+  action: '进入股指--股指期货
+
+    行情-股指界面，查看股指期货模块展示'
+  params: ''
+  expected: '1、展示为三宫格形式，符合UI/设计稿
+
+    2、每一格展示：股票名称、最新价、最新涨跌、最新涨幅；数据与自运营对比一致，与该只股票个股行情界面数据一致
+
+    3、数据字体颜色：涨红跌绿
+
+    4、模块标题为“股指期货”右侧有i图标，标题右侧展示“更多”按钮'
+- tc_id: 股指!34:TC_点击更多按钮
+  title: TC_点击更多按钮
+  case_name: TC_点击更多按钮
+  source:
+    sheet: 股指
+    row: 34
+  section: 其他指数
+  feature: 更多页面可跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 其他指数主界面
+  precondition: ''
+  action: '进入股指--其他指数
+
+    点击更多按钮'
+  params: ''
+  expected: 跳转进入其他指数列表页面
+- tc_id: 股指!35:TC_其他指数列表页返回股指tab页
+  title: TC_其他指数列表页返回股指tab页
+  case_name: TC_其他指数列表页返回股指tab页
+  source:
+    sheet: 股指
+    row: 35
+  section: 其他指数
+  feature: 更多页面可跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 其他指数列表页
+  precondition: ''
+  action: '进入股指--其他指数
+
+    点击页面左上角的返回按钮'
+  params: ''
+  expected: 正常返回到“股指”tab页
+- tc_id: 股指!36:TC_查看其他指数列表数据
+  title: TC_查看其他指数列表数据
+  case_name: TC_查看其他指数列表数据
+  source:
+    sheet: 股指
+    row: 36
+  section: 其他指数
+  feature: 列表测试功能
+  priority: high
+  source_priority: P0
+  entry: ''
+  step: ''
+  precondition: ''
+  action: '进入股指--其他指数
+
+    查看其他指数列表数据'
+  params: ''
+  expected: 数据展示正确，与自运营对比一致
+- tc_id: 股指!37:TC_上下左右滑动列表数据
+  title: TC_上下左右滑动列表数据
+  case_name: TC_上下左右滑动列表数据
+  source:
+    sheet: 股指
+    row: 37
+  section: 其他指数
+  feature: 列表测试功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: ''
+  precondition: ''
+  action: '进入股指--其他指数
+
+    上下左右滑动列表数据'
+  params: ''
+  expected: 滑动正常，数据加载正常
+- tc_id: 股指!38:TC_点击分时横屏界面右上角的X按钮
+  title: TC_点击分时横屏界面右上角的X按钮
+  case_name: TC_点击分时横屏界面右上角的X按钮
+  source:
+    sheet: 股指
+    row: 38
+  section: 其他指数
+  feature: 列表支持横竖屏切换功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 手机已开启自动旋转功能
+  precondition: ''
+  action: '进入股指--其他指数
+
+    点击分时横屏界面右上角的X按钮'
+  params: ''
+  expected: 返回到列表横屏界面
+- tc_id: 股指!39:TC_点击列表中的任意一只股票
+  title: TC_点击列表中的任意一只股票
+  case_name: TC_点击列表中的任意一只股票
+  source:
+    sheet: 股指
+    row: 39
+  section: 其他指数
+  feature: 列表支持横竖屏切换功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 手机已开启自动旋转功能
+  precondition: ''
+  action: '进入股指--其他指数
+
+    点击列表中的任意一只股票'
+  params: ''
+  expected: '1、跳转到该指数个股分时横屏界面
+
+    2、右侧不展示买卖盘'
+- tc_id: 股指!40:TC_将手机横放
+  title: TC_将手机横放
+  case_name: TC_将手机横放
+  source:
+    sheet: 股指
+    row: 40
+  section: 其他指数
+  feature: 列表支持横竖屏切换功能
+  priority: high
+  source_priority: P0
+  entry: ''
+  step: 手机已开启自动旋转功能
+  precondition: ''
+  action: '进入股指--其他指数
+
+    将手机横放'
+  params: ''
+  expected: 转换为横屏模式，页面及数据展示正常
+- tc_id: 股指!41:TC_将手机竖放
+  title: TC_将手机竖放
+  case_name: TC_将手机竖放
+  source:
+    sheet: 股指
+    row: 41
+  section: 其他指数
+  feature: 列表支持横竖屏切换功能
+  priority: high
+  source_priority: P0
+  entry: ''
+  step: 手机已开启自动旋转功能
+  precondition: ''
+  action: '进入股指--其他指数
+
+    将手机竖放'
+  params: ''
+  expected: 正常切换到竖屏界面，页面/数据显示正常
+- tc_id: 股指!42:TC_上下左右滑动列表数据
+  title: TC_上下左右滑动列表数据
+  case_name: TC_上下左右滑动列表数据
+  source:
+    sheet: 股指
+    row: 42
+  section: 其他指数
+  feature: 列表支持横竖屏切换功能
+  priority: high
+  source_priority: P0
+  entry: ''
+  step: 手机已开启自动旋转功能
+  precondition: ''
+  action: '进入股指--其他指数
+
+    上下左右滑动列表数据'
+  params: ''
+  expected: 滑动正常
+- tc_id: 股指!43:TC_点击股票搜索框左上角的返回按钮
+  title: TC_点击股票搜索框左上角的返回按钮
+  case_name: TC_点击股票搜索框左上角的返回按钮
+  source:
+    sheet: 股指
+    row: 43
+  section: 其他指数
+  feature: 搜索界面跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: ''
+  precondition: ''
+  action: '进入股指--其他指数
+
+    点击股票搜索框左上角的返回按钮'
+  params: ''
+  expected: 返回到其他指数列表页
+- tc_id: 股指!44:TC_点击页面右上角的搜索按钮
+  title: TC_点击页面右上角的搜索按钮
+  case_name: TC_点击页面右上角的搜索按钮
+  source:
+    sheet: 股指
+    row: 44
+  section: 其他指数
+  feature: 搜索界面跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 其他指数列表页
+  precondition: ''
+  action: '进入股指--其他指数
+
+    点击页面右上角的搜索按钮'
+  params: ''
+  expected: 跳转到搜索股票界面，搜索功能同股票搜索
+- tc_id: 股指!45:TC_点击任意一指数
+  title: TC_点击任意一指数
+  case_name: TC_点击任意一指数
+  source:
+    sheet: 股指
+    row: 45
+  section: 其他指数
+  feature: 指数跳转显示功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: ''
+  precondition: ''
+  action: '进入股指--其他指数
+
+    点击任意一指数'
+  params: ''
+  expected: '1、跳转到指数个股行情界面，下方默认展示“新闻”tab页
+
+    2、数据与各自自运营数据对比一致
+
+    3、分时界面不展示买卖盘
+
+    4、下方展示tab页：新闻、盘口
+
+    5、不支持闪电下单
+
+    6、左下角不展示沪深创大盘'
+- tc_id: 股指!46:TC_个股详情界面返回其他指数列表
+  title: TC_个股详情界面返回其他指数列表
+  case_name: TC_个股详情界面返回其他指数列表
+  source:
+    sheet: 股指
+    row: 46
+  section: 其他指数
+  feature: 指数跳转显示功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 个股详情界面
+  precondition: ''
+  action: '进入股指--其他指数
+
+    点击页面左上角的返回按钮'
+  params: ''
+  expected: 正常返回到其他指数列表页
+- tc_id: 股指!47:TC_点击页面左上角的返回按钮
+  title: TC_点击页面左上角的返回按钮
+  case_name: TC_点击页面左上角的返回按钮
+  source:
+    sheet: 股指
+    row: 47
+  section: 其他指数
+  feature: 主界面股票点击跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 指数个股详情界面
+  precondition: ''
+  action: '进入股指--其他指数
+
+    点击页面左上角的返回按钮'
+  params: ''
+  expected: 返回到“股指”tab页首页
+- tc_id: 股指!48:TC_其他指数主界面跳转指数个股行情界面
+  title: TC_其他指数主界面跳转指数个股行情界面
+  case_name: TC_其他指数主界面跳转指数个股行情界面
+  source:
+    sheet: 股指
+    row: 48
+  section: 其他指数
+  feature: 主界面股票点击跳转功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: 其他指数主界面
+  precondition: ''
+  action: '进入股指--其他指数
+
+    点击六宫格中的任意一个指数'
+  params: ''
+  expected: '1、跳转到指数个股行情界面，下方默认展示“新闻”tab页
+
+    2、数据与各自自运营数据对比一致
+
+    3、分时界面不展示买卖盘
+
+    4、下方展示tab页：新闻、盘口
+
+    5、不支持闪电下单
+
+    6、左下角不展示沪深创大盘'
+- tc_id: 股指!49:TC_主页面其他指数展示正常
+  title: TC_主页面其他指数展示正常
+  case_name: TC_主页面其他指数展示正常
+  source:
+    sheet: 股指
+    row: 49
+  section: 其他指数
+  feature: 主界面展示功能
+  priority: middle
+  source_priority: P1
+  entry: ''
+  step: ''
+  precondition: ''
+  action: '进入股指--其他指数
+
+    行情-股指界面，查看其他指数模块展示'
+  params: ''
+  expected: '1、展示为六宫格形式，符合UI/设计稿
+
+    2、每一格展示：股票名称、最新价、最新涨跌、最新涨幅；数据与自运营对比一致，与该只股票个股行情界面数据一致
+
+    3、数据字体颜色：涨红跌绿
+
+    4、模块标题为“其他指数”，标题右侧展示“更多”按钮'

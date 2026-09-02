@@ -36,7 +36,7 @@
 3. **跑 explore mode**（`references/explore.md`）：逐入口 `droid screen` → 归纳 path 串 → `reback_run` 写盘（`status: unverified`，全程 `confirm_only` 不点提交）→ `derive_docs` 派生 → `lint_profile` 检查。一轮下来即得"能导航但未经交易验证"的画像。
 4. `tools/prereq_rules.yaml` 是**跨 app 的**（`applies_to.app: "*"`）→ 规则表直接复用；只补该 app 的 `prerequisites.yaml`（已知码/账户能力/标的属性）。
 5. 第一轮当 spike 跑、边跑边 `reback` 反哺，之后就快。
-6. 属性词表要一致：`prerequisites.yaml` 的 `known_codes[].attributes` 键必须与 `prereq_rules.yaml` 的 `requires.instrument` 键同一套（`market/product/has_nav/has_holding/collateral_eligible/financing_eligible/orderbook_depth/...`），否则 `needed_codes` 解析不出码（有 `tests/apps/test_prereq_integration.py` 守）。
+6. 属性词表要一致：`prerequisites.yaml` 的 `known_codes[].attributes` 键必须与 `prereq_rules.yaml` 的 `requires.instrument` 键同一套（`market/product/has_nav/has_holding/collateral_eligible/financing_eligible/orderbook_depth/special_status/...`），否则 `needed_codes` 解析不出码（有 `tests/apps/test_prereq_integration.py` 守）。其中 `product: 股票` 的代码必须填写 `special_status`，取值限定为 `风险警示`、`退市整理`、`普通`。
 
 ---
 

@@ -65,7 +65,11 @@ def _render_prerequisites_md(prereq):
     lines.append("| 代码 | 名称 | 市场 | 属性 |")
     lines.append("|---|---|---|---|")
     for c in prereq.get("known_codes", []):
-        attrs = "、".join(k for k, v in (c.get("attributes") or {}).items() if v)
+        attrs = "、".join(
+            f"{k}={v}" if k == "special_status" else k
+            for k, v in (c.get("attributes") or {}).items()
+            if v
+        )
         lines.append(f"| {c.get('code', '')} | {c.get('name', '')} | {c.get('market', '')} | {attrs} |")
     lines.append("")
     lines.append("## 标的属性")

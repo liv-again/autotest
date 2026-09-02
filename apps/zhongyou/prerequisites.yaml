@@ -1,4 +1,12 @@
 slug: zhongyou
 account_capabilities: []
 instrument_properties: []
-known_codes: []
+known_codes:
+  - code: "920001"
+    name: "纬达光电"
+    market: 北交所
+    attributes: {market: 北交所, product: 股票, special_status: 风险警示, t1: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+  - code: "920002"
+    name: "万达轴承"
+    market: 北交所
+    attributes: {market: 北交所, product: 股票, special_status: 退市整理, t1: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}

@@ -1,0 +1,26 @@
+app: zhongyuan
+app_version: "9.53.12"
+scope: {sheet: 股指, selected_rows: [7, 8, 10, 11, 25, 27, 33, 36, 40, 41, 42]}
+status: entry_pending_confirmation
+expected_entries:
+  - 股指→国内指数
+  - 股指→股指期货
+  - 股指→其他指数
+observed_alternative: 首页→全部应用→行情→全球指数
+attempts:
+  - path: 底部导航行情→顶部行情
+    result: "可进入沪深京/板块/科创板行情，未发现股指入口"
+  - path: 首页→全部应用→行情
+    result: "可见投资机会/打新日历/英雄帮/全球指数等功能，未发现国内指数/股指期货/其他指数"
+cases:
+  - {sheet: 股指, row: 7, case_id: TC_国内指数列表数据正确展示, status: "入口待确认"}
+  - {sheet: 股指, row: 8, case_id: TC_国内指数列表横屏滑动功能正常, status: "入口待确认"}
+  - {sheet: 股指, row: 10, case_id: TC_国内指数列表切换横屏数据正常展示, status: "入口待确认"}
+  - {sheet: 股指, row: 11, case_id: TC_国内指数列表切换竖屏数据正常展示, status: "入口待确认"}
+  - {sheet: 股指, row: 25, case_id: TC_查看股指期货列表数据, status: "入口待确认"}
+  - {sheet: 股指, row: 27, case_id: TC_上下左右滑动列表数据, status: "入口待确认"}
+  - {sheet: 股指, row: 33, case_id: TC_主界面股指期货展示正确, status: "入口待确认"}
+  - {sheet: 股指, row: 36, case_id: TC_查看其他指数列表数据, status: "入口待确认"}
+  - {sheet: 股指, row: 40, case_id: TC_将手机横放, status: "入口待确认"}
+  - {sheet: 股指, row: 41, case_id: TC_将手机竖放, status: "入口待确认"}
+  - {sheet: 股指, row: 42, case_id: TC_上下左右滑动列表数据_其他指数, status: "入口待确认"}

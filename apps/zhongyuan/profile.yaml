@@ -1,0 +1,11 @@
+slug: zhongyuan
+app_version: 9.53.12
+entries:
+- key: quote.global_indices
+  path: 底部tab行情 → 顶部自选切换到行情 → 全球tab（股指）
+  last_verified: '2026-08-31'
+  app_version: 9.53.12
+  evidence_run: output/2026-08-31-zhongyuan-guozhi-full
+  status: verified
+capabilities: []
+verified_chains: []

@@ -21,6 +21,7 @@ known_codes:
   # requires.instrument（prereq_rules.yaml）。故 market/product 必须入 attributes（顶层 market
   # 仅供 schema/派生 md），键名对齐规则：has_holding/collateral_eligible/orderbook_depth/
   # in_subscription/has_nav/financing_eligible/t0（勿再用 holding/collateral 等引擎不认的旧名）。
+  # 股票必须填写 special_status：风险警示 / 退市整理 / 普通。
   - code: "950025"
     name: "北证50ETF测试39"
     market: 北交所
@@ -44,7 +45,7 @@ known_codes:
   - code: "600008"
     name: "首创股份"
     market: 沪深
-    attributes: {market: 沪深, product: 股票, t0: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: true, in_subscription: false}
+    attributes: {market: 沪深, product: 股票, special_status: 普通, t0: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: true, in_subscription: false}
   - code: "510300"
     name: "沪深300ETF"
     market: 沪深
@@ -56,11 +57,11 @@ known_codes:
   - code: "430019"
     name: "新松佳和"
     market: 北交所
-    attributes: {market: 北交所, product: 股票, t0: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+    attributes: {market: 北交所, product: 股票, special_status: 普通, t0: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
   - code: "900901"
     name: "云赛B股"
     market: 沪深
-    attributes: {market: 沪深, product: 股票, t0: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+    attributes: {market: 沪深, product: 股票, special_status: 普通, t0: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
   - code: "100706"
     name: "国债0706"
     market: 沪深

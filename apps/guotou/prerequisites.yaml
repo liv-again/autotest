@@ -1,0 +1,21 @@
+slug: zhongyou
+account_capabilities: []
+instrument_properties: []
+known_codes:
+  - code: "920001"
+    name: "纬达光电"
+    market: 北交所
+    attributes: {market: 北交所, product: 股票, special_status: 普通, t1: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+  - code: "920002"
+    name: "万达轴承"
+    market: 北交所
+    attributes: {market: 北交所, product: 股票, special_status: 普通, t1: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+  - code: "600000"
+    name: "浦发银行"
+    market: 上证A股
+    attributes: {market: 上证A股, product: 股票, special_status: 普通, t1: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+  - code: "000001"
+    name: "平安银行"
+    market: 深证A股
+    attributes: {market: 深证A股, product: 股票, special_status: 普通, t1: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+

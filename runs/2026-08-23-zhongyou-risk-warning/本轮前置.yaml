@@ -1,0 +1,101 @@
+rules_version: 1
+generated_from:
+  cases_count: 9
+cases:
+- tc_id: RISK-001
+  title: 北交所退市整理 详细报价字段显示正确（竖屏）
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: RISK-002
+  title: 北交所退市整理 切换代码新增字段展示正常（竖屏）
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: RISK-003
+  title: 北交所退市整理 切换北证A股字段展示正常（竖屏）
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: RISK-004
+  title: 北交所退市整理 盘口字段显示正确（竖屏）
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: RISK-005
+  title: 北交所退市整理 切换代码新增字段展示正常（盘口）
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: RISK-006
+  title: 北交所退市整理 切换北证A股字段展示正常（盘口）
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: RISK-007
+  title: 北交所退市整理 详细报价字段显示正确（横屏）
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: RISK-008
+  title: 北交所退市整理 切换代码新增字段展示正常（横屏）
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: RISK-009
+  title: 北交所退市整理 切换北证A股字段展示正常（横屏）
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+unidentified:
+- RISK-001
+- RISK-002
+- RISK-003
+- RISK-004
+- RISK-005
+- RISK-006
+- RISK-007
+- RISK-008
+- RISK-009
+conflicts: []
+summary:
+  identified: 0
+  unidentified: 9
+  conflict: 0
+  missing_codes: []

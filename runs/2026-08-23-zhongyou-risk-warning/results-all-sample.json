@@ -1,0 +1,70 @@
+{
+  "cases": [
+    {
+      "sheet": "风险警示需求",
+      "row": 2,
+      "case_id": "RISK-001",
+      "case_name": "TC_详细报价字段显示正确",
+      "tier": "high",
+      "status": "🟡待数据",
+      "actual": "无法验证详细报价字段：当前“退市整理”列表为空，缺少可进入详情页的京市退市整理标的",
+      "evidence": ["shots/delisting_empty.png"],
+      "tested_at": "2026-08-23"
+    },
+    {
+      "sheet": "风险警示需求",
+      "row": 3,
+      "case_id": "RISK-002",
+      "case_name": "TC_切换代码新增字段展示正常",
+      "tier": "middle",
+      "status": "样例待执行",
+      "actual": "全量样例占位：本用例尚未在中邮 App 中真实执行，需补充执行后替换此结果",
+      "evidence": [],
+      "tested_at": "样例生成：2026-08-25"
+    },
+    {
+      "sheet": "风险警示需求",
+      "row": 5,
+      "case_id": "RISK-004",
+      "case_name": "TC_盘口字段显示正确",
+      "tier": "high",
+      "status": "🟡待数据",
+      "actual": "无法验证盘口字段：当前“退市整理”列表为空，缺少可进入详情页的京市退市整理标的",
+      "evidence": ["shots/delisting_empty.png"],
+      "tested_at": "2026-08-23"
+    },
+    {
+      "sheet": "风险警示需求",
+      "row": 6,
+      "case_id": "RISK-005",
+      "case_name": "TC_切换代码新增字段展示正常",
+      "tier": "middle",
+      "status": "样例待执行",
+      "actual": "全量样例占位：本用例尚未在中邮 App 中真实执行，需补充执行后替换此结果",
+      "evidence": [],
+      "tested_at": "样例生成：2026-08-25"
+    },
+    {
+      "sheet": "风险警示需求",
+      "row": 8,
+      "case_id": "RISK-007",
+      "case_name": "TC_详细报价字段显示正确（横屏）",
+      "tier": "high",
+      "status": "🟡待数据",
+      "actual": "无法验证横屏详细报价字段：当前“退市整理”列表为空，缺少可进入详情页的京市退市整理标的",
+      "evidence": ["shots/delisting_empty.png"],
+      "tested_at": "2026-08-23"
+    },
+    {
+      "sheet": "风险警示需求",
+      "row": 9,
+      "case_id": "RISK-008",
+      "case_name": "TC_切换代码新增字段展示正常",
+      "tier": "middle",
+      "status": "样例待执行",
+      "actual": "全量样例占位：本用例尚未在中邮 App 中真实执行，需补充执行后替换此结果",
+      "evidence": [],
+      "tested_at": "样例生成：2026-08-25"
+    }
+  ]
+}

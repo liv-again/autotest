@@ -1,8 +1,32 @@
 version: 1
 rules:
+  - id: stock-risk-warning
+    applies_to: {app: "*", market: "北交所"}
+    match: {all: ["风险警示"], any: [], none: ["退市整理"]}
+    requires: {instrument: {market: "北交所", product: 股票, special_status: 风险警示}, account: "any"}
+    polarity: positive
+    priority: 7
+    confidence: medium
+    provenance: "股票特殊状态字段: 风险警示"
+  - id: stock-delisting-arrangement
+    applies_to: {app: "*", market: "北交所"}
+    match: {all: ["退市整理"], any: [], none: []}
+    requires: {instrument: {market: "北交所", product: 股票, special_status: 退市整理}, account: "any"}
+    polarity: positive
+    priority: 7
+    confidence: medium
+    provenance: "股票特殊状态字段: 退市整理"
+  - id: stock-normal
+    applies_to: {app: "*", market: "北交所"}
+    match: {all: [], any: ["普通股票", "普通股"], none: ["风险警示", "退市整理"]}
+    requires: {instrument: {market: "北交所", product: 股票, special_status: 普通}, account: "any"}
+    polarity: positive
+    priority: 7
+    confidence: medium
+    provenance: "股票特殊状态字段: 普通"
   - id: basic-bjse-etf
     applies_to: {app: "*", market: "北交所"}
-    match: {all: ["买入"], any: [], none: ["融资", "融券", "还款", "还券", "大宗"]}
+    match: {all: ["买入"], any: [], none: ["融资", "融券", "还款", "还券", "大宗", "股票", "风险警示", "退市整理"]}
     requires: {instrument: {market: "北交所", product: "ETF"}, account: "any"}
     polarity: no_prereq
     priority: 1

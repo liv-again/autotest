@@ -42,7 +42,25 @@
           "code": {"type": "string"},
           "name": {"type": "string"},
           "market": {"type": "string"},
-          "attributes": {"type": "object"}
+          "attributes": {
+            "type": "object",
+            "properties": {
+              "special_status": {
+                "type": "string",
+                "enum": ["风险警示", "退市整理", "普通"]
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "required": ["product"],
+                  "properties": {"product": {"const": "股票"}}
+                },
+                "then": {"required": ["special_status"]},
+                "else": {"not": {"required": ["special_status"]}}
+              }
+            ]
+          }
         }
       }
     }

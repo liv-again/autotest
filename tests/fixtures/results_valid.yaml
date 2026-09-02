@@ -1,0 +1,16 @@
+schema_version: "2.0"
+cases:
+  - sheet: 用例
+    row: 2
+    case_id: TC-001
+    source_order: 1
+    execution_order: 2
+    status: ✅通过
+    steps:
+      - step_id: TC-001#S1
+        step_index: 1
+        row: 2
+        action: 输入账号
+        expected: 账号可输入
+        status: ✅通过
+        actual: 账号输入成功

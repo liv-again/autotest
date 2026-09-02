@@ -20,9 +20,12 @@
    }
 
 优先使用 ``row`` 或 Excel 中已有的用例 ID 定位。没有 ID 时可以使用
-``sheet`` + ``case_name``；如果同名用例分布在多个不连续区块，必须提供
-``row``，模块会拒绝猜测。证据图片会嵌入“🤖AI证据”列，非图片证据会以文本
-保存。常见表头会自动识别；自定义格式可补充 ``--header-row``、
+``sheet`` + ``case_name``；如果一个标识命中多个源行，必须提供 ``row`` 或
+步骤结果中的 ``row/source_row``，模块会拒绝猜测。步骤结果使用 ``steps``
+列表，每个步骤带 ``step_id``、``step_index``、``status`` 和 ``actual``；同一
+源行的多个步骤会在 AI 实测结果单元格中按步骤换行，跨行步骤只写入各自源行，
+不会再把一个结果广播到连续区块。证据图片会嵌入“🤖AI证据”列，非图片证据
+会以文本保存。常见表头会自动识别；自定义格式可补充 ``--header-row``、
 ``--case-id-column``、``--case-name-column``。输出默认写成源文件旁的
 ``*_AI自测结果.xlsx``，不会覆盖源文件。
 
@@ -196,6 +199,46 @@ def _load_result_document(path: Path) -> Any:
         raise AnnotationError(f"结果文件不是合法 JSON: {path}: {exc}") from exc
 
 
+def _normalize_evidence_fields(record: dict[str, Any]) -> None:
+    raw_evidence = _first(record, "evidence", "evidence_paths", "evidencePaths", "screenshots", "证据")
+    record["evidence"] = _as_evidence(raw_evidence)
+    record["evidence_paths"] = _as_evidence_paths(raw_evidence)
+
+
+def _normalize_step(item: Any, *, parent: Mapping[str, Any], index: int) -> dict[str, Any]:
+    if not isinstance(item, Mapping):
+        raise AnnotationError(f"第 {index} 个步骤必须是对象，收到: {item!r}")
+    step = dict(item)
+    parent_identity = _text(
+        _first(parent, "case_id", "case_name")
+        or f"{_text(parent.get('sheet'))}!{_text(parent.get('row'))}"
+    )
+    step["step_index"] = _as_int(
+        _first(step, "step_index", "stepIndex", "index", "序号")
+    ) or index
+    step["step_id"] = _text(
+        _first(step, "step_id", "stepId", "id", "步骤ID", "步骤编号")
+    ) or f"{parent_identity}#S{step['step_index']}"
+    step["row"] = _as_int(
+        _first(step, "row", "row_number", "rowNumber", "source_row", "sourceRow")
+    )
+    step["status"] = _text(_first(step, "status", "state", "result_status", "判定")) or "·待跑"
+    step["actual"] = _text(_first(step, "actual", "result", "actual_result", "实测结果", "description"))
+    step["action"] = _text(_first(step, "action", "操作", "操作描述", "step", "步骤"))
+    step["expected"] = _text(_first(step, "expected", "预期", "预期结果", "assertion", "断言"))
+    step["execution_order"] = _as_int(_first(step, "execution_order", "executionOrder", "执行顺序"))
+    raw_dependencies = _first(step, "depends_on", "dependsOn", "依赖")
+    if raw_dependencies in (None, ""):
+        step["depends_on"] = []
+    elif isinstance(raw_dependencies, list):
+        step["depends_on"] = [_text(item) for item in raw_dependencies if _text(item)]
+    else:
+        raise AnnotationError(f"步骤 {step['step_id']} 的 depends_on 必须是列表")
+    step["tested_at"] = _text(_first(step, "tested_at", "testedAt", "time", "date", "测试时间"))
+    _normalize_evidence_fields(step)
+    return step
+
+
 def normalize_results(document: Any) -> list[dict[str, Any]]:
     """把常见的结果外壳归一化为结果记录列表。
 
@@ -227,10 +270,20 @@ def normalize_results(document: Any) -> list[dict[str, Any]]:
         record["status"] = _text(_first(record, "status", "state", "result_status", "判定")) or "·待跑"
         record["actual"] = _text(_first(record, "actual", "result", "actual_result", "实测结果", "description"))
         record["tier"] = _text(_first(record, "tier", "level", "档位"))
+        record["source_order"] = _as_int(_first(record, "source_order", "sourceOrder", "原始顺序"))
+        record["execution_order"] = _as_int(_first(record, "execution_order", "executionOrder", "执行顺序"))
         record["tested_at"] = _text(_first(record, "tested_at", "testedAt", "time", "date", "测试时间"))
-        raw_evidence = _first(record, "evidence", "evidence_paths", "evidencePaths", "screenshots", "证据")
-        record["evidence"] = _as_evidence(raw_evidence)
-        record["evidence_paths"] = _as_evidence_paths(raw_evidence)
+        _normalize_evidence_fields(record)
+        raw_steps = _first(record, "steps", "step_results", "stepResults", "步骤结果")
+        if raw_steps in (None, ""):
+            record["steps"] = []
+        elif not isinstance(raw_steps, list):
+            raise AnnotationError(f"用例 {record.get('case_id') or record.get('case_name') or index} 的 steps 必须是列表")
+        else:
+            record["steps"] = [
+                _normalize_step(step, parent=record, index=step_index)
+                for step_index, step in enumerate(raw_steps, start=1)
+            ]
         normalized.append(record)
     return normalized
 
@@ -367,7 +420,13 @@ def _select_sheets(wb: Any, sheet_name: str | None) -> list[Any]:
     return [wb[sheet_name]]
 
 
-def _resolve_rows(wb: Any, record: Mapping[str, Any], case_rows: Mapping[str, list[dict[str, Any]]]) -> list[tuple[Any, int]]:
+def _resolve_rows(
+    wb: Any,
+    record: Mapping[str, Any],
+    case_rows: Mapping[str, list[dict[str, Any]]],
+    *,
+    expand_case_block: bool = True,
+) -> list[tuple[Any, int]]:
     sheet_name = _text(record.get("sheet")) or None
     row_number = record.get("row")
     case_id = _norm(record.get("case_id"))
@@ -395,6 +454,9 @@ def _resolve_rows(wb: Any, record: Mapping[str, Any], case_rows: Mapping[str, li
         if not sheet_name and len(candidate_sheets) > 1:
             locations = ", ".join(f"{name}!{row_number}" for name in sorted(candidate_sheets))
             raise AnnotationError(f"行号在多个工作表中都存在，请补充 sheet；候选位置: {locations}")
+        if not expand_case_block:
+            return [(ws, selected_row["row"]) for ws, selected_row in candidates]
+
         expanded: list[tuple[Any, int]] = []
         for ws, selected_row in candidates:
             # row 是最可靠的消歧键；同时给出 case_name 时，把该行扩展为同一
@@ -419,6 +481,15 @@ def _resolve_rows(wb: Any, record: Mapping[str, Any], case_rows: Mapping[str, li
         return expanded
     if not candidates:
         return []
+
+    if not expand_case_block:
+        if len(candidates) > 1:
+            identity = record.get("case_id") or record.get("case_name")
+            locations = ", ".join(f"{ws.title}!{row['row']}" for ws, row in candidates)
+            raise AnnotationError(
+                f"结果定位不唯一，命中多个源行 ({identity!r})，请补充 row/source_row 或 steps；候选位置: {locations}"
+            )
+        return [(candidates[0][0], candidates[0][1]["row"])]
 
     # 一个连续区块可代表一个多步骤用例；多个不连续区块说明名称/ID不唯一，
     # 必须让调用方补充 row，不能把结果写到可能是另一个用例的行上。
@@ -530,6 +601,77 @@ def _set_cell_value(cell: Any, value: Any, *, fill: PatternFill | None = None) -
     _format_output_cell(cell)
     if fill:
         cell.fill = fill
+
+
+def _status_bucket(status: Any) -> str:
+    normalized = _norm(status)
+    if "失败" in normalized or "❌" in normalized or "不通过" in normalized:
+        return "fail"
+    if "阻塞" in normalized or "⛔" in normalized:
+        return "blocked"
+    if "待" in normalized or normalized.startswith("🟡") or normalized.startswith("⚠"):
+        return "pending"
+    if "跳过" in normalized or "⏭" in normalized or normalized.startswith("☑"):
+        return "skip"
+    if "通过" in normalized or "成功" in normalized or "✅" in normalized or "🟢" in normalized:
+        return "pass"
+    return "other"
+
+
+def _rollup_status(statuses: Sequence[Any]) -> str:
+    """按步骤状态汇总用例/源行状态，失败和阻塞优先。"""
+
+    values = [_text(status) for status in statuses if _text(status)]
+    if not values:
+        return "·待跑"
+    buckets = [_status_bucket(value) for value in values]
+    if "fail" in buckets:
+        return "❌失败"
+    if "blocked" in buckets:
+        return "⛔阻塞"
+    if "pending" in buckets:
+        return next(value for value, bucket in zip(values, buckets) if bucket == "pending")
+    if all(bucket == "skip" for bucket in buckets):
+        return "⏭跳过"
+    if all(bucket == "pass" for bucket in buckets):
+        return "✅通过"
+    return values[0]
+
+
+def _step_record(parent: Mapping[str, Any], step: Mapping[str, Any]) -> dict[str, Any]:
+    """将步骤结果合并为可独立定位的结果记录，不继承父级 steps。"""
+
+    record = dict(parent)
+    record.pop("steps", None)
+    for key in ("sheet", "case_id", "case_name", "tier"):
+        if step.get(key) not in (None, ""):
+            record[key] = step[key]
+    if step.get("row") is not None:
+        record["row"] = step["row"]
+    record["step_id"] = step.get("step_id")
+    record["step_index"] = step.get("step_index")
+    record["execution_order"] = step.get("execution_order")
+    record["depends_on"] = list(step.get("depends_on", []))
+    record["step_action"] = step.get("action", "")
+    record["step_expected"] = step.get("expected", "")
+    record["status"] = step.get("status") or "·待跑"
+    record["actual"] = step.get("actual", "")
+    record["tested_at"] = step.get("tested_at") or parent.get("tested_at", "")
+    record["evidence"] = list(step.get("evidence", []))
+    record["evidence_paths"] = list(step.get("evidence_paths", []))
+    return record
+
+
+def _actual_line(record: Mapping[str, Any]) -> str:
+    """生成只包含当前步骤的实际结果文本。"""
+
+    actual = _text(record.get("actual"))
+    if record.get("step_id"):
+        index = record.get("step_index") or "?"
+        status = _text(record.get("status")) or "·待跑"
+        prefix = f"S{index} [{status}]"
+        return f"{prefix} {actual}".rstrip()
+    return actual
 
 
 def _write_summary(wb: Any, report: Mapping[str, Any], source_path: Path, generated_at: str) -> None:
@@ -649,78 +791,197 @@ def annotate_workbook(
         "source": str(source_path),
         "output": str(output_path),
         "matched": [],
+        "matched_steps": [],
         "unmatched": [],
         "warnings": [],
         "skipped_sheets": skipped_sheets,
     }
 
-    for index, record in enumerate(result_records, start=1):
-        resolve_record = record
-        if sheet and not record.get("sheet"):
-            resolve_record = dict(record)
-            resolve_record["sheet"] = sheet
-        matches = _resolve_rows(wb, resolve_record, case_rows)
-        if not matches:
-            identity = record.get("case_id") or record.get("case_name") or record.get("row") or f"结果#{index}"
-            report["unmatched"].append({
-                "identity": str(identity),
-                "reason": "未找到对应工作表/用例 ID/用例名称/行号",
-                "case_id": record.get("case_id"),
-                "case_name": record.get("case_name"),
-            })
-            continue
+    write_units: list[dict[str, Any]] = []
+    seen_step_ids: set[str] = set()
 
-        matched_by_sheet: dict[str, list[int]] = {}
-        for ws, row_number in matches:
-            matched_by_sheet.setdefault(ws.title, []).append(row_number)
-        for ws_name, row_numbers in matched_by_sheet.items():
-            ws = wb[ws_name]
-            header_row, _ = sheet_headers[ws_name]
-            _hide_legacy_columns(ws, header_row)
-            output_columns = _ensure_output_columns(ws, header_row)
-            _, source_columns = sheet_headers[ws_name]
-            tier = record.get("tier")
-            if not tier and "priority" in source_columns:
-                tier = _text(ws.cell(min(row_numbers), source_columns["priority"]).value)
-            for row_number in row_numbers:
-                status_cell = ws.cell(row_number, output_columns["🤖AI状态"])
-                actual_cell = ws.cell(row_number, output_columns["🤖AI实测结果"])
-                evidence_cell = ws.cell(row_number, output_columns["🤖AI证据"])
-                time_cell = ws.cell(row_number, output_columns["🤖AI时间"])
-                _set_cell_value(status_cell, record.get("status"), fill=_status_fill(_text(record.get("status"))))
-                _set_cell_value(actual_cell, record.get("actual"))
-                evidence_text = "\n".join(record.get("evidence", []))
-                if row_number == min(row_numbers):
-                    _embed_evidence(
-                        ws,
-                        evidence_cell,
-                        record.get("evidence", []),
-                        record.get("evidence_paths", []),
-                        evidence_root=evidence_root_path,
-                        result_dir=result_root,
-                        source_dir=source_path.parent,
-                        width=evidence_width,
-                        warnings=report["warnings"],
-                    )
-                _set_cell_value(evidence_cell, evidence_text)
-                _set_cell_value(time_cell, record.get("tested_at") or generated)
-                ws.column_dimensions[get_column_letter(output_columns["🤖AI状态"])].width = 18
-                ws.column_dimensions[get_column_letter(output_columns["🤖AI实测结果"])].width = 58
-                ws.column_dimensions[get_column_letter(output_columns["🤖AI证据"])].width = 34
-                ws.column_dimensions[get_column_letter(output_columns["🤖AI时间"])].width = 22
-                if row_number == min(row_numbers) and evidence_text:
-                    height = ws.row_dimensions[row_number].height or 15
-                    ws.row_dimensions[row_number].height = max(height, min(260, evidence_width * 2.25))
+    def _unit_tier(unit_record: Mapping[str, Any], target_ws: Any, target_row: int) -> str:
+        tier = _text(unit_record.get("tier"))
+        if tier:
+            return tier
+        _, source_columns = sheet_headers[target_ws.title]
+        if "priority" in source_columns:
+            return _text(target_ws.cell(target_row, source_columns["priority"]).value)
+        return ""
+
+    for index, record in enumerate(result_records, start=1):
+        resolve_record = dict(record)
+        if sheet and not record.get("sheet"):
+            resolve_record["sheet"] = sheet
+        owner_key = _text(
+            resolve_record.get("case_id")
+            or resolve_record.get("case_name")
+            or f"{resolve_record.get('sheet') or ''}!{resolve_record.get('row') or index}"
+        )
+        steps = list(record.get("steps") or [])
+        units_for_case: list[dict[str, Any]] = []
+
+        if steps:
+            for step in steps:
+                step_record = _step_record(resolve_record, step)
+                step_id = _text(step_record.get("step_id"))
+                if step_id in seen_step_ids:
+                    raise AnnotationError(f"步骤结果重复: {step_id}")
+                seen_step_ids.add(step_id)
+                matches = _resolve_rows(
+                    wb,
+                    step_record,
+                    case_rows,
+                    expand_case_block=False,
+                )
+                if not matches:
+                    report["unmatched"].append({
+                        "identity": step_id,
+                        "reason": "未找到步骤对应的工作表/源行/用例 ID/用例名称",
+                        "case_id": resolve_record.get("case_id"),
+                        "case_name": resolve_record.get("case_name"),
+                        "step_id": step_id,
+                    })
+                    continue
+                for target_ws, target_row in matches:
+                    unit_record = dict(step_record)
+                    unit_record["tier"] = _unit_tier(unit_record, target_ws, target_row)
+                    unit = {
+                        "ws": target_ws,
+                        "row": target_row,
+                        "record": unit_record,
+                        "owner_key": owner_key,
+                    }
+                    units_for_case.append(unit)
+                    write_units.append(unit)
+                    report["matched_steps"].append({
+                        "step_id": step_id,
+                        "sheet": target_ws.title,
+                        "row": target_row,
+                        "execution_order": unit_record.get("execution_order"),
+                        "depends_on": unit_record.get("depends_on", []),
+                        "status": unit_record.get("status"),
+                        "actual": unit_record.get("actual", ""),
+                    })
+        else:
+            matches = _resolve_rows(
+                wb,
+                resolve_record,
+                case_rows,
+                expand_case_block=False,
+            )
+            if not matches:
+                identity = record.get("case_id") or record.get("case_name") or record.get("row") or f"结果#{index}"
+                report["unmatched"].append({
+                    "identity": str(identity),
+                    "reason": "未找到对应工作表/用例 ID/用例名称/行号",
+                    "case_id": record.get("case_id"),
+                    "case_name": record.get("case_name"),
+                })
+                continue
+            for target_ws, target_row in matches:
+                unit_record = dict(resolve_record)
+                unit_record["tier"] = _unit_tier(unit_record, target_ws, target_row)
+                unit = {
+                    "ws": target_ws,
+                    "row": target_row,
+                    "record": unit_record,
+                    "owner_key": owner_key,
+                }
+                units_for_case.append(unit)
+                write_units.append(unit)
+
+        if units_for_case:
+            case_statuses = [unit["record"].get("status") for unit in units_for_case]
+            case_evidence: list[str] = []
+            case_actual: list[str] = []
+            case_steps: list[dict[str, Any]] = []
+            for unit in units_for_case:
+                unit_record = unit["record"]
+                case_actual.append(_actual_line(unit_record))
+                for evidence in unit_record.get("evidence", []):
+                    if evidence not in case_evidence:
+                        case_evidence.append(evidence)
+                if unit_record.get("step_id"):
+                    case_steps.append({
+                        "step_id": unit_record.get("step_id"),
+                        "row": unit["row"],
+                        "step_index": unit_record.get("step_index"),
+                        "status": unit_record.get("status"),
+                        "actual": unit_record.get("actual", ""),
+                    })
             report["matched"].append({
-                "sheet": ws_name,
-                "rows": sorted(row_numbers),
+                "sheet": units_for_case[0]["ws"].title,
+                "rows": sorted({unit["row"] for unit in units_for_case}),
                 "case_id": record.get("case_id"),
                 "case_name": record.get("case_name"),
-                "tier": tier,
-                "status": record.get("status"),
-                "actual": record.get("actual"),
-                "evidence": record.get("evidence", []),
+                "tier": next((_text(unit["record"].get("tier")) for unit in units_for_case if unit["record"].get("tier")), ""),
+                "status": _rollup_status(case_statuses) if steps else record.get("status"),
+                "actual": "\n".join(line for line in case_actual if line),
+                "evidence": case_evidence,
+                "steps": case_steps,
             })
+
+    grouped_units: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    for unit in write_units:
+        grouped_units.setdefault((unit["ws"].title, unit["row"]), []).append(unit)
+
+    for (ws_name, row_number), units in grouped_units.items():
+        owner_keys = {unit["owner_key"] for unit in units}
+        if len(owner_keys) > 1:
+            owners = ", ".join(sorted(owner_keys))
+            raise AnnotationError(f"多个用例结果指向同一源行 {ws_name}!{row_number}: {owners}")
+        units.sort(key=lambda unit: (unit["record"].get("step_index") is None, unit["record"].get("step_index") or 0))
+        ws = wb[ws_name]
+        header_row, _ = sheet_headers[ws_name]
+        _hide_legacy_columns(ws, header_row)
+        output_columns = _ensure_output_columns(ws, header_row)
+        statuses = [unit["record"].get("status") for unit in units]
+        if len(units) == 1 and not units[0]["record"].get("step_id"):
+            status = _text(units[0]["record"].get("status")) or "·待跑"
+        else:
+            status = _rollup_status(statuses)
+        actual_text = "\n".join(
+            line for line in (_actual_line(unit["record"]) for unit in units) if line
+        )
+        evidence: list[str] = []
+        evidence_paths: list[str] = []
+        for unit in units:
+            for item in unit["record"].get("evidence", []):
+                if item not in evidence:
+                    evidence.append(item)
+            for item in unit["record"].get("evidence_paths", []):
+                if item not in evidence_paths:
+                    evidence_paths.append(item)
+        evidence_text = "\n".join(evidence)
+        status_cell = ws.cell(row_number, output_columns["🤖AI状态"])
+        actual_cell = ws.cell(row_number, output_columns["🤖AI实测结果"])
+        evidence_cell = ws.cell(row_number, output_columns["🤖AI证据"])
+        time_cell = ws.cell(row_number, output_columns["🤖AI时间"])
+        _set_cell_value(status_cell, status, fill=_status_fill(status))
+        _set_cell_value(actual_cell, actual_text)
+        _embed_evidence(
+            ws,
+            evidence_cell,
+            evidence,
+            evidence_paths,
+            evidence_root=evidence_root_path,
+            result_dir=result_root,
+            source_dir=source_path.parent,
+            width=evidence_width,
+            warnings=report["warnings"],
+        )
+        _set_cell_value(evidence_cell, evidence_text)
+        tested_at = next((_text(unit["record"].get("tested_at")) for unit in units if unit["record"].get("tested_at")), "")
+        _set_cell_value(time_cell, tested_at or generated)
+        ws.column_dimensions[get_column_letter(output_columns["🤖AI状态"])].width = 18
+        ws.column_dimensions[get_column_letter(output_columns["🤖AI实测结果"])].width = 58
+        ws.column_dimensions[get_column_letter(output_columns["🤖AI证据"])].width = 34
+        ws.column_dimensions[get_column_letter(output_columns["🤖AI时间"])].width = 22
+        if evidence_text or actual_text.count("\n"):
+            height = ws.row_dimensions[row_number].height or 15
+            line_count = max(1, evidence_text.count("\n") + 1, actual_text.count("\n") + 1)
+            ws.row_dimensions[row_number].height = max(height, min(260, 18 * line_count))
 
     if strict and report["unmatched"]:
         details = ", ".join(item["identity"] for item in report["unmatched"])

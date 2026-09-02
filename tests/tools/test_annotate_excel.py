@@ -34,7 +34,7 @@ def test_backfills_by_id_row_and_name_without_changing_source(tmp_path):
         source,
         {
             "cases": [
-                {"case_id": "TC-001", "status": "✅通过", "actual": "两步均完成", "tested_at": "2026-08-25"},
+                {"case_id": "TC-001", "row": 2, "status": "✅通过", "actual": "两步均完成", "tested_at": "2026-08-25"},
                 {"sheet": "用例", "case_name": "查询", "status": "🟡待数据", "result": "缺少行情数据"},
                 {"sheet": "用例", "row": 7, "case_id": "TC-005", "status": "❌失败", "actual": "第二处失败"},
                 {"sheet": "用例", "case_id": "NOT-FOUND", "status": "⏭跳过"},
@@ -63,7 +63,7 @@ def test_backfills_by_id_row_and_name_without_changing_source(tmp_path):
     status_column = headers.index("🤖AI状态") + 1
     actual_column = headers.index("🤖AI实测结果") + 1
     assert sheet.cell(2, status_column).value == "✅通过"
-    assert sheet.cell(3, status_column).value == "✅通过"
+    assert sheet.cell(3, status_column).value is None
     assert sheet.cell(4, status_column).value == "🟡待数据"
     assert sheet.cell(4, actual_column).value == "缺少行情数据"
     assert sheet.cell(7, status_column).value == "❌失败"
@@ -145,23 +145,23 @@ def test_custom_header_and_columns_support_an_arbitrary_layout(tmp_path):
 
     report = annotate_workbook(
         source,
-        [{"sheet": "自定义", "case_id": "C-001", "status": "通过", "actual": "导出成功"}],
+        [{"sheet": "自定义", "row": 4, "case_id": "C-001", "status": "通过", "actual": "导出成功"}],
         output,
         header_row=3,
         case_id_column="A",
         case_name_column="B",
     )
 
-    assert report["matched"][0]["rows"] == [4, 5]
+    assert report["matched"][0]["rows"] == [4]
     annotated = load_workbook(output)
     sheet = annotated["自定义"]
     headers = [sheet.cell(3, column).value for column in range(1, sheet.max_column + 1)]
     status_column = headers.index("🤖AI状态") + 1
     assert sheet.cell(4, status_column).value == "通过"
-    assert sheet.cell(5, status_column).value == "通过"
+    assert sheet.cell(5, status_column).value is None
 
 
-def test_row_with_case_name_expands_to_all_contiguous_steps(tmp_path):
+def test_case_level_result_does_not_broadcast_to_contiguous_steps(tmp_path):
     source = tmp_path / "cases.xlsx"
     output = tmp_path / "expanded.xlsx"
     _make_workbook(source)
@@ -172,10 +172,115 @@ def test_row_with_case_name_expands_to_all_contiguous_steps(tmp_path):
         output,
     )
 
-    assert report["matched"][0]["rows"] == [2, 3]
+    assert report["matched"][0]["rows"] == [2]
     workbook = load_workbook(output)
     sheet = workbook["用例"]
     headers = [sheet.cell(1, column).value for column in range(1, sheet.max_column + 1)]
     status_column = headers.index("🤖AI状态") + 1
     assert sheet.cell(2, status_column).value == "样例待执行"
-    assert sheet.cell(3, status_column).value == "样例待执行"
+    assert sheet.cell(3, status_column).value is None
+
+
+def test_step_results_are_written_only_to_their_exact_source_rows(tmp_path):
+    source = tmp_path / "cases.xlsx"
+    output = tmp_path / "step-results.xlsx"
+    _make_workbook(source)
+
+    report = annotate_workbook(
+        source,
+        {
+            "cases": [
+                {
+                    "sheet": "用例",
+                    "row": 2,
+                    "case_id": "TC-001",
+                    "steps": [
+                        {
+                            "step_id": "TC-001#S1",
+                            "step_index": 1,
+                            "row": 2,
+                            "status": "✅通过",
+                            "actual": "账号输入成功",
+                        },
+                        {
+                            "step_id": "TC-001#S2",
+                            "step_index": 2,
+                            "row": 3,
+                            "status": "❌失败",
+                            "actual": "登录按钮无响应",
+                        },
+                    ],
+                }
+            ]
+        },
+        output,
+        append_summary=False,
+    )
+
+    assert report["matched"][0]["rows"] == [2, 3]
+    assert [item["step_id"] for item in report["matched_steps"]] == ["TC-001#S1", "TC-001#S2"]
+    workbook = load_workbook(output)
+    sheet = workbook["用例"]
+    headers = [sheet.cell(1, column).value for column in range(1, sheet.max_column + 1)]
+    status_column = headers.index("🤖AI状态") + 1
+    actual_column = headers.index("🤖AI实测结果") + 1
+    assert sheet.cell(2, status_column).value == "✅通过"
+    assert sheet.cell(2, actual_column).value == "S1 [✅通过] 账号输入成功"
+    assert sheet.cell(3, status_column).value == "❌失败"
+    assert sheet.cell(3, actual_column).value == "S2 [❌失败] 登录按钮无响应"
+
+
+def test_multiple_steps_on_one_source_row_are_combined_in_order(tmp_path):
+    source = tmp_path / "cases.xlsx"
+    output = tmp_path / "same-row-steps.xlsx"
+    _make_workbook(source)
+
+    annotate_workbook(
+        source,
+        {
+            "cases": [
+                {
+                    "sheet": "用例",
+                    "row": 2,
+                    "case_id": "TC-001",
+                    "steps": [
+                        {"step_id": "TC-001#S1", "status": "✅通过", "actual": "进入页面"},
+                        {"step_id": "TC-001#S2", "status": "✅通过", "actual": "展示数据"},
+                    ],
+                }
+            ]
+        },
+        output,
+        append_summary=False,
+    )
+
+    workbook = load_workbook(output)
+    sheet = workbook["用例"]
+    headers = [sheet.cell(1, column).value for column in range(1, sheet.max_column + 1)]
+    actual_column = headers.index("🤖AI实测结果") + 1
+    assert sheet.cell(2, actual_column).value == "S1 [✅通过] 进入页面\nS2 [✅通过] 展示数据"
+
+
+def test_duplicate_step_id_is_rejected(tmp_path):
+    source = tmp_path / "cases.xlsx"
+    _make_workbook(source)
+
+    with pytest.raises(AnnotationError, match="步骤结果重复"):
+        annotate_workbook(
+            source,
+            {
+                "cases": [
+                    {
+                        "sheet": "用例",
+                        "row": 2,
+                        "case_id": "TC-001",
+                        "steps": [
+                            {"step_id": "duplicate", "status": "通过"},
+                            {"step_id": "duplicate", "status": "通过"},
+                        ],
+                    }
+                ]
+            },
+            tmp_path / "duplicate.xlsx",
+            append_summary=False,
+        )

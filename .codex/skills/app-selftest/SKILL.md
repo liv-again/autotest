@@ -22,17 +22,31 @@ description: AI 驱动 Android App 用 Excel 用例做业务自测——用户�
 
 ## 结果回填（测后必须执行）
 
-每个已执行/阻塞/跳过的用例都要保留 `sheet` + `row`（Excel 实际行号；没有稳定 ID 时这是唯一定位键），并在运行目录生成 `results.json`。禁止把结果再写入 Python 源码或历史字典。格式如下：
+每个已执行/阻塞/跳过的用例都要保留 `sheet` + `row`（Excel 实际行号；没有稳定 ID 时这是唯一定位键），并在运行目录生成 `results.json`。结果契约版本为 `2.0`：保留 `source_order`（Excel 原始顺序）与 `execution_order`（实际执行顺序），步骤结果必须带 `step_id`，不能依赖结果列表顺序回填。禁止把结果再写入 Python 源码或历史字典。格式如下：
 
 ```json
 {
+  "schema_version": "2.0",
   "cases": [
     {
       "sheet": "工作表名称",
       "row": 12,
       "case_id": "可选的用例 ID",
+      "source_order": 12,
+      "execution_order": 4,
       "status": "✅通过",
-      "actual": "实测结果或阻塞原因",
+      "steps": [
+        {
+          "step_id": "工作表名称!12:S1",
+          "step_index": 1,
+          "row": 12,
+          "action": "当前用例对应的操作",
+          "expected": "当前步骤预期",
+          "status": "✅通过",
+          "actual": "只描述当前步骤的实测结果",
+          "depends_on": []
+        }
+      ],
       "tier": "high",
       "evidence": ["shots/case-12.png"],
       "tested_at": "2026-08-25"
@@ -40,6 +54,8 @@ description: AI 驱动 Android App 用 Excel 用例做业务自测——用户�
   ]
 }
 ```
+
+`setup`/公共导航动作可以记录在独立的执行轨迹中，但不得写入任何用例的 `actual`。同一 Excel 行包含多个步骤时，步骤结果在该行的 AI 实测结果单元格内按 `S1`、`S2` 换行回填；一个用例跨多行时，每个步骤必须提供对应的 `row/source_row`。没有 `steps` 的旧版单条结果只精确回填指定源行，不再向连续行广播。
 
 然后调用：
 

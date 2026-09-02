@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "App self-test result document",
+  "type": "object",
+  "required": ["cases"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "cases": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/case"}
+    }
+  },
+  "$defs": {
+    "evidence": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {"type": "string"},
+          {
+            "type": "object",
+            "properties": {
+              "path": {"type": "string"},
+              "file": {"type": "string"},
+              "description": {"type": "string"},
+              "text": {"type": "string"},
+              "label": {"type": "string"}
+            }
+          }
+        ]
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": ["step_id", "step_index", "status", "actual"],
+      "properties": {
+        "step_id": {"type": "string", "minLength": 1},
+        "step_index": {"type": "integer", "minimum": 1},
+        "row": {"type": "integer", "minimum": 1},
+        "source_row": {"type": "integer", "minimum": 1},
+        "action": {"type": "string"},
+        "expected": {"type": "string"},
+        "status": {"type": "string", "minLength": 1},
+        "actual": {"type": "string"},
+        "depends_on": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "evidence": {"$ref": "#/$defs/evidence"},
+        "tested_at": {"type": "string"},
+        "execution_order": {"type": "integer", "minimum": 1}
+      }
+    },
+    "case": {
+      "type": "object",
+      "required": ["sheet", "row", "status"],
+      "properties": {
+        "sheet": {"type": "string", "minLength": 1},
+        "row": {"type": "integer", "minimum": 1},
+        "source_row": {"type": "integer", "minimum": 1},
+        "case_id": {"type": "string"},
+        "case_name": {"type": "string"},
+        "tc_id": {"type": "string"},
+        "source_order": {"type": "integer", "minimum": 1},
+        "execution_order": {"type": "integer", "minimum": 1},
+        "status": {"type": "string", "minLength": 1},
+        "actual": {"type": "string"},
+        "steps": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/step"}
+        },
+        "tier": {"type": "string"},
+        "evidence": {"$ref": "#/$defs/evidence"},
+        "tested_at": {"type": "string"}
+      },
+      "anyOf": [
+        {"required": ["actual"]},
+        {"required": ["steps"]}
+      ]
+    }
+  }
+}

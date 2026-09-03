@@ -1,0 +1,491 @@
+rules_version: 1
+generated_from:
+  cases_count: 48
+cases:
+- tc_id: 股指!2:TC_更多页面跳转国内股指列表页面
+  title: TC_更多页面跳转国内股指列表页面
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!3:TC_国内股指列表页跳转股指tab页
+  title: TC_国内股指列表页跳转股指tab页
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!4:TC_股指tab页跳转搜索界面
+  title: TC_股指tab页跳转搜索界面
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!5:TC_搜索页面跳转股指tab页
+  title: TC_搜索页面跳转股指tab页
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!6:TC_国内指数列表滑动功能正常
+  title: TC_国内指数列表滑动功能正常
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!7:TC_国内指数列表数据正确展示
+  title: TC_国内指数列表数据正确展示
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!8:TC_国内指数列表横屏滑动功能正常
+  title: TC_国内指数列表横屏滑动功能正常
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!9:TC_国内指数列表横屏跳转指数个股分时横屏界面
+  title: TC_国内指数列表横屏跳转指数个股分时横屏界面
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!10:TC_国内指数列表切换横屏数据正常展示
+  title: TC_国内指数列表切换横屏数据正常展示
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!11:TC_国内指数列表切换竖屏数据正常展示
+  title: TC_国内指数列表切换竖屏数据正常展示
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!12:TC_指数个股分时横屏界面跳转国内指数列表横屏
+  title: TC_指数个股分时横屏界面跳转国内指数列表横屏
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!13:TC_个股详情界面跳转国内股指列表页
+  title: TC_个股详情界面跳转国内股指列表页
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!14:TC_国内指数列表跳转其余指数个股行情界面
+  title: TC_国内指数列表跳转其余指数个股行情界面
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!15:TC_国内指数列表跳转任意指数A个股行情界面
+  title: TC_国内指数列表跳转任意指数A个股行情界面
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!16:TC_国内指数列表页跳转搜索界面
+  title: TC_国内指数列表页跳转搜索界面
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!17:TC_搜索页面跳转国内指数列表页
+  title: TC_搜索页面跳转国内指数列表页
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!18:TC_国内股指主页面跳转指数个股界面
+  title: TC_国内股指主页面跳转指数个股界面
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!19:TC_指数个股界面跳转国内股指主页面
+  title: TC_指数个股界面跳转国内股指主页面
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!20:TC_国内股指界面正确展示
+  title: TC_国内股指界面正确展示
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!21:TC_股指期货列表页返回股指tab页
+  title: TC_股指期货列表页返回股指tab页
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!22:TC_主页面跳转股指期货列表页面
+  title: TC_主页面跳转股指期货列表页面
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!23:TC_隐藏股指期货介绍
+  title: TC_隐藏股指期货介绍
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!24:TC_股指期货介绍页面正常显示
+  title: TC_股指期货介绍页面正常显示
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!25:TC_查看股指期货列表数据
+  title: TC_查看股指期货列表数据
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!26:TC_点击标题沪深300/上证50/中证500
+  title: TC_点击标题沪深300/上证50/中证500
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!27:TC_上下左右滑动列表数据
+  title: TC_上下左右滑动列表数据
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!28:TC_个股详情界面返回股指期货列表
+  title: TC_个股详情界面返回股指期货列表
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!29:TC_股指期货界面跳转任意股指界面
+  title: TC_股指期货界面跳转任意股指界面
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!30:TC_股指期货列表跳转搜索界面
+  title: TC_股指期货列表跳转搜索界面
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!31:TC_搜索界面返回股指期货列表
+  title: TC_搜索界面返回股指期货列表
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!32:TC_股指期货主页面股票跳转股指A个股行情界面
+  title: TC_股指期货主页面股票跳转股指A个股行情界面
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!33:TC_主界面股指期货展示正确
+  title: TC_主界面股指期货展示正确
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!34:TC_点击更多按钮
+  title: TC_点击更多按钮
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!35:TC_其他指数列表页返回股指tab页
+  title: TC_其他指数列表页返回股指tab页
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!36:TC_查看其他指数列表数据
+  title: TC_查看其他指数列表数据
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!37:TC_上下左右滑动列表数据
+  title: TC_上下左右滑动列表数据
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!38:TC_点击分时横屏界面右上角的X按钮
+  title: TC_点击分时横屏界面右上角的X按钮
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!39:TC_点击列表中的任意一只股票
+  title: TC_点击列表中的任意一只股票
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!40:TC_将手机横放
+  title: TC_将手机横放
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!41:TC_将手机竖放
+  title: TC_将手机竖放
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!42:TC_上下左右滑动列表数据
+  title: TC_上下左右滑动列表数据
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!43:TC_点击股票搜索框左上角的返回按钮
+  title: TC_点击股票搜索框左上角的返回按钮
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!44:TC_点击页面右上角的搜索按钮
+  title: TC_点击页面右上角的搜索按钮
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!45:TC_点击任意一指数
+  title: TC_点击任意一指数
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!46:TC_个股详情界面返回其他指数列表
+  title: TC_个股详情界面返回其他指数列表
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!47:TC_点击页面左上角的返回按钮
+  title: TC_点击页面左上角的返回按钮
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!48:TC_其他指数主界面跳转指数个股行情界面
+  title: TC_其他指数主界面跳转指数个股行情界面
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: 股指!49:TC_主页面其他指数展示正常
+  title: TC_主页面其他指数展示正常
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+unidentified:
+- 股指!2:TC_更多页面跳转国内股指列表页面
+- 股指!3:TC_国内股指列表页跳转股指tab页
+- 股指!4:TC_股指tab页跳转搜索界面
+- 股指!5:TC_搜索页面跳转股指tab页
+- 股指!6:TC_国内指数列表滑动功能正常
+- 股指!7:TC_国内指数列表数据正确展示
+- 股指!8:TC_国内指数列表横屏滑动功能正常
+- 股指!9:TC_国内指数列表横屏跳转指数个股分时横屏界面
+- 股指!10:TC_国内指数列表切换横屏数据正常展示
+- 股指!11:TC_国内指数列表切换竖屏数据正常展示
+- 股指!12:TC_指数个股分时横屏界面跳转国内指数列表横屏
+- 股指!13:TC_个股详情界面跳转国内股指列表页
+- 股指!14:TC_国内指数列表跳转其余指数个股行情界面
+- 股指!15:TC_国内指数列表跳转任意指数A个股行情界面
+- 股指!16:TC_国内指数列表页跳转搜索界面
+- 股指!17:TC_搜索页面跳转国内指数列表页
+- 股指!18:TC_国内股指主页面跳转指数个股界面
+- 股指!19:TC_指数个股界面跳转国内股指主页面
+- 股指!20:TC_国内股指界面正确展示
+- 股指!21:TC_股指期货列表页返回股指tab页
+- 股指!22:TC_主页面跳转股指期货列表页面
+- 股指!23:TC_隐藏股指期货介绍
+- 股指!24:TC_股指期货介绍页面正常显示
+- 股指!25:TC_查看股指期货列表数据
+- 股指!26:TC_点击标题沪深300/上证50/中证500
+- 股指!27:TC_上下左右滑动列表数据
+- 股指!28:TC_个股详情界面返回股指期货列表
+- 股指!29:TC_股指期货界面跳转任意股指界面
+- 股指!30:TC_股指期货列表跳转搜索界面
+- 股指!31:TC_搜索界面返回股指期货列表
+- 股指!32:TC_股指期货主页面股票跳转股指A个股行情界面
+- 股指!33:TC_主界面股指期货展示正确
+- 股指!34:TC_点击更多按钮
+- 股指!35:TC_其他指数列表页返回股指tab页
+- 股指!36:TC_查看其他指数列表数据
+- 股指!37:TC_上下左右滑动列表数据
+- 股指!38:TC_点击分时横屏界面右上角的X按钮
+- 股指!39:TC_点击列表中的任意一只股票
+- 股指!40:TC_将手机横放
+- 股指!41:TC_将手机竖放
+- 股指!42:TC_上下左右滑动列表数据
+- 股指!43:TC_点击股票搜索框左上角的返回按钮
+- 股指!44:TC_点击页面右上角的搜索按钮
+- 股指!45:TC_点击任意一指数
+- 股指!46:TC_个股详情界面返回其他指数列表
+- 股指!47:TC_点击页面左上角的返回按钮
+- 股指!48:TC_其他指数主界面跳转指数个股行情界面
+- 股指!49:TC_主页面其他指数展示正常
+conflicts: []
+summary:
+  identified: 0
+  unidentified: 48
+  conflict: 0
+  missing_codes: []

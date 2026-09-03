@@ -1,0 +1,13 @@
+slug: zhongyuan
+packages:
+- com.hexin.plat.android.ZhongyuanSecurity
+verified_versions:
+- version: 9.53.12
+  verified_at: '2026-08-31'
+compatibility:
+  min: 9.53.12
+  max_exclusive: 999.999.999
+test_accounts: []
+environment: env.yaml
+profile: profile.yaml
+prerequisites: prerequisites.yaml

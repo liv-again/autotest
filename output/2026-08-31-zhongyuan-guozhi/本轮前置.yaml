@@ -1,0 +1,121 @@
+rules_version: 1
+generated_from:
+  cases_count: 11
+cases:
+- tc_id: TC_国内指数列表数据正确展示
+  title: 国内指数列表数据正确展示
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: TC_国内指数列表横屏滑动功能正常
+  title: 国内指数列表横屏滑动功能正常
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: TC_国内指数列表切换横屏数据正常展示
+  title: 国内指数列表切换横屏数据正常展示
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: TC_国内指数列表切换竖屏数据正常展示
+  title: 国内指数列表切换竖屏数据正常展示
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: TC_查看股指期货列表数据
+  title: 查看股指期货列表数据
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: TC_上下左右滑动列表数据
+  title: 股指期货列表上下左右滑动
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: TC_主界面股指期货展示正确
+  title: 主界面股指期货展示正确
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: TC_查看其他指数列表数据
+  title: 查看其他指数列表数据
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: TC_将手机横放
+  title: 其他指数列表切换横屏
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: TC_将手机竖放
+  title: 其他指数列表切换竖屏
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+- tc_id: TC_上下左右滑动列表数据_其他指数
+  title: 其他指数列表上下左右滑动
+  matched_rule_ids: []
+  status: unidentified
+  required_instruments: []
+  required_account: any
+  polarity: unknown
+  needed_codes: []
+  provenance: []
+unidentified:
+- TC_国内指数列表数据正确展示
+- TC_国内指数列表横屏滑动功能正常
+- TC_国内指数列表切换横屏数据正常展示
+- TC_国内指数列表切换竖屏数据正常展示
+- TC_查看股指期货列表数据
+- TC_上下左右滑动列表数据
+- TC_主界面股指期货展示正确
+- TC_查看其他指数列表数据
+- TC_将手机横放
+- TC_将手机竖放
+- TC_上下左右滑动列表数据_其他指数
+conflicts: []
+summary:
+  identified: 0
+  unidentified: 11
+  conflict: 0
+  missing_codes: []

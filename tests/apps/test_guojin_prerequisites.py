@@ -10,6 +10,12 @@ def test_known_codes_present():
     codes = {c["code"] for c in doc["known_codes"]}
     assert {"950025", "950001", "950015"} <= codes
 
+def test_stock_codes_have_special_status():
+    doc, _ = load_and_validate(P, "prerequisites")
+    stocks = [c for c in doc["known_codes"] if c["attributes"].get("product") == "股票"]
+    assert stocks
+    assert {c["attributes"]["special_status"] for c in stocks} == {"普通"}
+
 def test_accounts_masked_only(forbidden_full_accounts):
     txt = P.read_text(encoding="utf-8")
     for full in forbidden_full_accounts:

@@ -1,0 +1,113 @@
+slug: zhongyuan
+account_capabilities: []
+instrument_properties: []
+known_codes:
+- code: '950025'
+  name: 北证50ETF测试39
+  market: 北交所
+  attributes:
+    market: 北交所
+    product: ETF
+    t0: true
+- code: '950022'
+  name: 北证50ETF测试36
+  market: 北交所
+  attributes:
+    market: 北交所
+    product: ETF
+    t0: true
+- code: '950027'
+  name: 北证50ETF测试41
+  market: 北交所
+  attributes:
+    market: 北交所
+    product: ETF
+    t0: true
+- code: '950001'
+  name: 北证50ETF测试2
+  market: 北交所
+  attributes:
+    market: 北交所
+    product: ETF
+    t0: true
+- code: '950015'
+  name: 北证50ETF测试29
+  market: 北交所
+  attributes:
+    market: 北交所
+    product: ETF
+    t0: true
+- code: '600008'
+  name: 首创股份
+  market: 沪深
+  attributes:
+    market: 沪深
+    product: 股票
+    special_status: 普通
+    t0: false
+- code: '510300'
+  name: 沪深300ETF
+  market: 沪深
+  attributes:
+    market: 沪深
+    product: ETF
+    t0: false
+- code: '510050'
+  name: 上证50ETF
+  market: 沪深
+  attributes:
+    market: 沪深
+    product: ETF
+    t0: false
+- code: '430019'
+  name: 新松佳和
+  market: 北交所
+  attributes:
+    market: 北交所
+    product: 股票
+    special_status: 普通
+    t0: false
+- code: '900901'
+  name: 云赛B股
+  market: 沪深
+  attributes:
+    market: 沪深
+    product: 股票
+    special_status: 普通
+    t0: false
+- code: '100706'
+  name: 国债0706
+  market: 沪深
+  attributes:
+    market: 沪深
+    product: 债券
+    t0: true
+- code: '123207'
+  name: 冠中转债
+  market: 沪深
+  attributes:
+    market: 沪深
+    product: 可转债
+    t0: true
+- code: '000001'
+  name: 平安银行
+  market: 沪深
+  attributes:
+    market: 沪深
+    product: 股票
+    special_status: 普通
+    t0: false
+- code: '159901'
+  name: 深证100ETF
+  market: 沪深
+  attributes:
+    market: 沪深
+    product: ETF
+    t0: false
+- code: '010706'
+  name: 07国债06
+  market: 沪深
+  attributes:
+    market: 沪深
+    product: 债券
+    t0: true

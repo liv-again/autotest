@@ -1,0 +1,6 @@
+interface:
+  display_name: "App 初始化"
+  short_description: "创建新 App 配置并填充标准前置测试数据"
+  default_prompt: "请使用 $app-init 初始化一个新的 Android App 配置，填充标准 known_codes，并提醒我需要人工补充的内容。"
+policy:
+  allow_implicit_invocation: true

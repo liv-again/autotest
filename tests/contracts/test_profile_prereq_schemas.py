@@ -1,4 +1,4 @@
-from tools.contracts.validate import load_and_validate
+from tools.contracts.validate import load_and_validate, validate
 import pathlib
 FX = pathlib.Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -17,6 +17,29 @@ def test_prerequisites_valid():
 def test_prerequisites_rejects_full_account():
     _, errs = load_and_validate(FX / "prerequisites_invalid.yaml", "prerequisites")
     assert errs  # 裸 account_no / 非脱敏 mask 被拒
+
+
+def test_stock_special_status_is_required_and_enum_limited():
+    base = {
+        "slug": "x",
+        "account_capabilities": [],
+        "instrument_properties": [],
+        "known_codes": [{
+            "code": "430019",
+            "name": "测试股票",
+            "market": "北交所",
+            "attributes": {"market": "北交所", "product": "股票", "special_status": "普通"},
+        }],
+    }
+    assert validate(base, "prerequisites") == []
+
+    missing = {**base, "known_codes": [{**base["known_codes"][0],
+                                         "attributes": {"market": "北交所", "product": "股票"}}]}
+    assert validate(missing, "prerequisites")
+
+    invalid = {**base, "known_codes": [{**base["known_codes"][0],
+                                         "attributes": {"market": "北交所", "product": "股票", "special_status": "ST"}}]}
+    assert validate(invalid, "prerequisites")
 
 
 def test_capabilities_allow_version_metadata():

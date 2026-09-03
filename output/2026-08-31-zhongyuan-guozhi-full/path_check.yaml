@@ -1,0 +1,64 @@
+app: zhongyuan
+app_version: 9.53.12
+status: confirmed
+entry_alias: 全球=股指
+expected_path: 底部tab行情 → 顶部自选切换到行情 → 全球tab（股指）
+observed_path: 底部tab行情 → 顶部自选切换到行情 → 全球tab
+observed_headings:
+- 国内指数
+- 股指期货
+- 其他指数
+evidence:
+- shots/03_global_tab_entry.png
+- shots/60_global_final_confirmed.png
+confirmed_at: '2026-08-31T01:11:00+08:00'
+selected_count: 48
+selected_rows:
+- 2
+- 3
+- 4
+- 5
+- 6
+- 7
+- 8
+- 9
+- 10
+- 11
+- 12
+- 13
+- 14
+- 15
+- 16
+- 17
+- 18
+- 19
+- 20
+- 21
+- 22
+- 23
+- 24
+- 25
+- 26
+- 27
+- 28
+- 29
+- 30
+- 31
+- 32
+- 33
+- 34
+- 35
+- 36
+- 37
+- 38
+- 39
+- 40
+- 41
+- 42
+- 43
+- 44
+- 45
+- 46
+- 47
+- 48
+- 49

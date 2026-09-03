@@ -7,10 +7,10 @@
 ```
 
 - **解析Excel(分档)**：按分档口径（见 `tiering.md`）过滤出本轮范围，默认只取 `优先级==high`。
-- **按屏分组**：把用例按会落在同一个页面/入口的分组，进一次详情页就把该屏能验的用例全验掉，比逐例导航省数倍成本。
+- **按屏分组**：把用例按会落在同一个页面/入口的分组，进一次详情页就把该屏能验的用例全验掉，比逐例导航省数倍成本。分组只改变 `execution_order`，不改变 Excel 的 `source_order`；公共导航动作标记为 `setup`，不得混入某条用例的 `actual`。
 - **串行驱动手机**：`tools/droid.py` 一次一步操作真机（adb + uiautomator），不并发操作同一设备。
 - **元素树断言 + 截图取证**：断言优先用 `droid.py has "关键词"`（退出码判断，内部比对不看输出，规避终端乱码）；dump 找不到图标/自定义绘制目标时，按 `visual-targets.md` 使用截图和 `droid.py tap --bbox` 兜底；需要留痕的关键结果截图（`droid.py shot`），每个用例留 1 张最能说明问题的即可。
-- **生成结果 → 回填标注Excel**：将每个用例的 `row/source_row`、`case_id` 或 `sheet+case_name` 与 `status/actual/evidence` 写入 JSON/YAML，调用 `python tools/annotate_excel.py --src cases.xlsx --results results.json`。结果按定位键安全写回，证据图片内联，默认生成新文件并附带当前批次汇总。
+- **生成结果 → 回填标注Excel**：将每个用例的 `row/source_row`、`case_id` 或 `sheet+case_name` 与 `status/steps/evidence` 写入 JSON/YAML；每个步骤补充 `step_id`，跨行步骤补充自己的 `row/source_row`，调用 `python tools/annotate_excel.py --src cases.xlsx --results results.json`。结果按源行和步骤定位安全写回，同一行多步骤在 AI 实测结果中按序换行，禁止把一个用例结果广播到连续行；证据图片按现有配置处理，默认生成新文件并附带当前批次汇总。
 - **记性价比**：跑完一批用 `tools/metrics.py` 记 output token / 上下文税(cache_read) / 单行成本，写入 `runs/metrics.md`；超阈值会由 `metrics.py` 里接线的 `assess` 自动打印提醒（考虑新开精简会话/固化 Maestro）。
 
 ## 工具清单（都在 `tools/`）

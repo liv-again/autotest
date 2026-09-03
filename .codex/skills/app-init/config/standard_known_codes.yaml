@@ -1,0 +1,89 @@
+# 新 App 初始化时写入 prerequisites.yaml 的标准测试标的候选。
+# 这些代码只作为跨 App 的测试数据起点；写入新 App 后仍需人工确认可用性和属性。
+#
+# 字段/规则查询位置（当前没有单独的字段注册表）：
+# 1. 当前真正参与自动匹配的字段，以 tools/prereq_rules.yaml 中
+#    rules[*].requires.instrument 的键为准；这是可执行规则的权威来源。
+# 2. 属性匹配实现见 tools/prereq_extract.py 的 _resolve_needed_codes：
+#    required_instrument 中的每个 (key, value) 都必须在 attributes 中完全相等。
+# 3. 字段词表概览见 .codex/skills/app-selftest/references/onboarding.md（属性词表段落）。
+# 4. 数据结构和股票 special_status 约束见 tools/contracts/schemas/prerequisites.schema.json。
+#
+# 当前已注册/使用的 instrument 属性及作用：
+# - market：市场范围，如 北交所、沪深；用于规则筛选市场。
+# - product：产品类型，如 ETF、股票、债券、可转债；用于区分测试标的。
+# - special_status：股票特殊状态，仅允许 风险警示/退市整理/普通；用于对应股票状态测试，股票必须填写。
+# - t0：是否 T+0（当天可回转交易）；当前规则暂未直接引用，保留用于标的说明和后续规则扩展。
+# - has_nav：是否有净值/IOPV 数据；对应 iopv-needs-nav；模板默认不填，待 App 内确认。
+# - has_holding：是否有可卖持仓；对应 sell-needs-holding；模板默认不填，待 App 内确认。
+# - orderbook_depth：是否有盘口深度/五档行情；对应 market-order-needs-depth；模板默认不填，待 App 内确认。
+# - collateral_eligible：是否可作为担保品交易；对应 rz-collateral，通常要求信用账户；模板默认不填，待 App 内确认。
+# - financing_eligible：是否属于可融资买入标的；对应 rz-buy-eligible 和 rz-buy-negative-instrument；模板默认不填，待 App 内确认。
+# - in_subscription：是否处于认购/申购期间；对应 subscription-field；模板默认不填，待 App 内确认。
+#
+# 维护约定：标准模板中的 true/false 是候选值，不是新 App 的验证结论。
+# 若属性尚未确认，建议先删掉该属性而不是猜填 false；属性缺失时相关用例会显示 ⚠️缺码，
+# 待人工确认后再补回。market/product 及股票 special_status 不建议省略，否则基础匹配或 schema
+# 校验可能失败。
+schema_version: 1
+known_codes:
+  - code: "950025"
+    name: "北证50ETF测试39"
+    market: 北交所
+    attributes: {market: 北交所, product: ETF, t0: true}
+  - code: "950022"
+    name: "北证50ETF测试36"
+    market: 北交所
+    attributes: {market: 北交所, product: ETF, t0: true}
+  - code: "950027"
+    name: "北证50ETF测试41"
+    market: 北交所
+    attributes: {market: 北交所, product: ETF, t0: true}
+  - code: "950001"
+    name: "北证50ETF测试2"
+    market: 北交所
+    attributes: {market: 北交所, product: ETF, t0: true}
+  - code: "950015"
+    name: "北证50ETF测试29"
+    market: 北交所
+    attributes: {market: 北交所, product: ETF, t0: true}
+  - code: "600008"
+    name: "首创股份"
+    market: 沪深
+    attributes: {market: 沪深, product: 股票, special_status: 普通, t0: false}
+  - code: "510300"
+    name: "沪深300ETF"
+    market: 沪深
+    attributes: {market: 沪深, product: ETF, t0: false}
+  - code: "510050"
+    name: "上证50ETF"
+    market: 沪深
+    attributes: {market: 沪深, product: ETF, t0: false}
+  - code: "430019"
+    name: "新松佳和"
+    market: 北交所
+    attributes: {market: 北交所, product: 股票, special_status: 普通, t0: false}
+  - code: "900901"
+    name: "云赛B股"
+    market: 沪深
+    attributes: {market: 沪深, product: 股票, special_status: 普通, t0: false}
+  - code: "100706"
+    name: "国债0706"
+    market: 沪深
+    attributes: {market: 沪深, product: 债券, t0: true}
+  - code: "123207"
+    name: "冠中转债"
+    market: 沪深
+    attributes: {market: 沪深, product: 可转债, t0: true}
+  - code: "000001"
+    name: "平安银行"
+    market: 沪深
+    attributes: {market: 沪深, product: 股票, special_status: 普通, t0: false}
+  - code: "159901"
+    name: "深证100ETF"
+    market: 沪深
+    attributes: {market: 沪深, product: ETF, t0: false}
+  - code: "010706"
+    name: "07国债06"
+    market: 沪深
+    attributes: {market: 沪深, product: 债券, t0: true}

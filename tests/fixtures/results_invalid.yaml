@@ -1,0 +1,8 @@
+cases:
+  - sheet: 用例
+    row: 0
+    status: 通过
+    steps:
+      - step_index: 0
+        status: 通过
+        actual: 完成

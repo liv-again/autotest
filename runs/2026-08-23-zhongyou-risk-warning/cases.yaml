@@ -1,0 +1,48 @@
+# 从“北交所ETF基金 - 行情.xlsx / 风险警示需求”页整理。
+# 本轮默认只承诺 high；middle 用例保留在输入集但不纳入 selection。
+cases:
+  - tc_id: RISK-001
+    title: 北交所退市整理 详细报价字段显示正确（竖屏）
+    source_row: 2
+    priority: high
+    description: 行情-京市退市整理-分时/K线详情页：点击简报价，查看详细报价字段
+  - tc_id: RISK-002
+    title: 北交所退市整理 切换代码新增字段展示正常（竖屏）
+    source_row: 3
+    priority: middle
+    description: 进入北证退市整理分时页，点击简报价，查看数据显示
+  - tc_id: RISK-003
+    title: 北交所退市整理 切换北证A股字段展示正常（竖屏）
+    source_row: 4
+    priority: middle
+    description: 切换北证A股无新增字段的分时页，点击简报价，查看数据显示
+  - tc_id: RISK-004
+    title: 北交所退市整理 盘口字段显示正确（竖屏）
+    source_row: 5
+    priority: high
+    description: 行情-京市退市整理-分时/K线详情页：切换盘口tab，查看盘口字段
+  - tc_id: RISK-005
+    title: 北交所退市整理 切换代码新增字段展示正常（盘口）
+    source_row: 6
+    priority: middle
+    description: 进入北证退市整理分时页，点击简报价，切换盘口tab，查看盘口字段
+  - tc_id: RISK-006
+    title: 北交所退市整理 切换北证A股字段展示正常（盘口）
+    source_row: 7
+    priority: middle
+    description: 切换北证A股无新增字段的分时页，切换盘口tab，查看盘口字段
+  - tc_id: RISK-007
+    title: 北交所退市整理 详细报价字段显示正确（横屏）
+    source_row: 8
+    priority: high
+    description: 行情-京市退市整理-分时/K线详情页：切换横屏，点击简报价，查看详细报价字段
+  - tc_id: RISK-008
+    title: 北交所退市整理 切换代码新增字段展示正常（横屏）
+    source_row: 9
+    priority: middle
+    description: 进入北证退市整理分时页，切换横屏，点击简报价，查看数据显示
+  - tc_id: RISK-009
+    title: 北交所退市整理 切换北证A股字段展示正常（横屏）
+    source_row: 10
+    priority: middle
+    description: 切换北证A股无新增字段的分时页，切换横屏，点击简报价，查看数据显示

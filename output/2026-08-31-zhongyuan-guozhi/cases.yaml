@@ -1,0 +1,91 @@
+# 从原始 Excel「股指」工作表按本轮默认 high（P0）筛选出的前置输入。
+# 原始行号保留在 source 中，供 results.json 与回填标注使用。
+cases:
+  - tc_id: TC_国内指数列表数据正确展示
+    title: 国内指数列表数据正确展示
+    priority: high
+    source_priority: P0
+    source: {sheet: 股指, row: 7}
+    section: 国内指数
+    action: 进入股指--国内指数；查看国内指数列表数据
+    expected: 数据展示、颜色和字段正常
+  - tc_id: TC_国内指数列表横屏滑动功能正常
+    title: 国内指数列表横屏滑动功能正常
+    priority: high
+    source_priority: P0
+    source: {sheet: 股指, row: 8}
+    section: 国内指数
+    action: 进入股指--国内指数；上下左右滑动列表数据
+    expected: 滑动正常
+  - tc_id: TC_国内指数列表切换横屏数据正常展示
+    title: 国内指数列表切换横屏数据正常展示
+    priority: high
+    source_priority: P0
+    source: {sheet: 股指, row: 10}
+    section: 国内指数
+    action: 进入股指--国内指数；将手机横放
+    expected: 横屏模式页面及数据展示正常
+  - tc_id: TC_国内指数列表切换竖屏数据正常展示
+    title: 国内指数列表切换竖屏数据正常展示
+    priority: high
+    source_priority: P0
+    source: {sheet: 股指, row: 11}
+    section: 国内指数
+    action: 进入股指--国内指数；将手机竖放
+    expected: 竖屏页面及数据显示正常
+  - tc_id: TC_查看股指期货列表数据
+    title: 查看股指期货列表数据
+    priority: high
+    source_priority: P0
+    source: {sheet: 股指, row: 25}
+    section: 股指期货
+    action: 进入股指--股指期货；查看股指期货列表数据
+    expected: 数据展示正确
+  - tc_id: TC_上下左右滑动列表数据
+    title: 股指期货列表上下左右滑动
+    priority: high
+    source_priority: P0
+    source: {sheet: 股指, row: 27}
+    section: 股指期货
+    action: 进入股指--股指期货；上下左右滑动列表数据
+    expected: 滑动正常，数据加载正常
+  - tc_id: TC_主界面股指期货展示正确
+    title: 主界面股指期货展示正确
+    priority: high
+    source_priority: P0
+    source: {sheet: 股指, row: 33}
+    section: 股指期货
+    action: 进入股指--股指期货；查看股指期货模块展示
+    expected: 三宫格及数据字段、颜色、更多入口正常
+  - tc_id: TC_查看其他指数列表数据
+    title: 查看其他指数列表数据
+    priority: high
+    source_priority: P0
+    source: {sheet: 股指, row: 36}
+    section: 其他指数
+    action: 进入股指--其他指数；查看其他指数列表数据
+    expected: 数据展示正确
+  - tc_id: TC_将手机横放
+    title: 其他指数列表切换横屏
+    priority: high
+    source_priority: P0
+    source: {sheet: 股指, row: 40}
+    section: 其他指数
+    action: 进入股指--其他指数；将手机横放
+    expected: 横屏模式页面及数据展示正常
+  - tc_id: TC_将手机竖放
+    title: 其他指数列表切换竖屏
+    priority: high
+    source_priority: P0
+    source: {sheet: 股指, row: 41}
+    section: 其他指数
+    action: 进入股指--其他指数；将手机竖放
+    expected: 竖屏页面及数据显示正常
+  - tc_id: TC_上下左右滑动列表数据_其他指数
+    title: 其他指数列表上下左右滑动
+    priority: high
+    source_priority: P0
+    source: {sheet: 股指, row: 42}
+    section: 其他指数
+    action: 进入股指--其他指数；上下左右滑动列表数据
+    expected: 滑动正常

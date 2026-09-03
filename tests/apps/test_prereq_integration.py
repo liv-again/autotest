@@ -49,3 +49,19 @@ def test_real_prereq_exercises_financing_eligible_attribute(tmp_path):
     codes = set(by["TC-NOFIN"]["needed_codes"])
     assert "950025" in codes, by["TC-NOFIN"]        # 950025 明确 non_financing
     assert codes, "financing_eligible:false 应解析出北交所非融资码，说明 financing_eligible 已入 attributes 词表"
+
+
+def test_stock_special_status_rules_resolve_normal_and_require_marked_status(tmp_path):
+    by, req = _run(
+        tmp_path,
+        "cases:\n"
+        "  - {tc_id: TC-RISK, title: 风险警示股票买入}\n"
+        "  - {tc_id: TC-DELIST, title: 退市整理股票买入}\n"
+        "  - {tc_id: TC-NORMAL, title: 普通股票买入}\n",
+    )
+    assert by["TC-RISK"]["required_instruments"][0]["special_status"] == "风险警示"
+    assert by["TC-DELIST"]["required_instruments"][0]["special_status"] == "退市整理"
+    assert by["TC-NORMAL"]["required_instruments"][0]["special_status"] == "普通"
+    assert all(by[tc]["status"] == "identified" for tc in ("TC-RISK", "TC-DELIST", "TC-NORMAL"))
+    assert by["TC-NORMAL"]["needed_codes"] == ["430019"]
+    assert {"TC-RISK", "TC-DELIST"} <= set(req["summary"]["missing_codes"])

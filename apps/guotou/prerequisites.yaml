@@ -1,20 +1,33 @@
 slug: guotou
-account_capabilities: []
+account_capabilities:
+  - {alias: pt, type: 普通, capabilities: ["沪深交易", "全权限"], mask: "***0086"}
 instrument_properties: []
-known_codes:
-  - code: "920001"
-    name: "纬达光电"
+known_codes: 
+  - code: "950025"
+    name: "北证50ETF测试39"
     market: 北交所
-    attributes: {market: 北交所, product: 股票, special_status: 普通, t1: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+    attributes: {market: 北交所, product: ETF, t0: true}
+  - code: "600000"
+    name: "浦发银行"
+    market: 沪深
+    attributes: {market: 沪深, product: 股票, t0: false}
+  - code: "000001"
+    name: "平安银行"
+    market: 沪深
+    attributes: {market: 沪深, product: 股票, t0: false}
+  - code: "920001"
+    name: "上市01"
+    market: 北交所
+    attributes: {market: 北交所, product: 股票, t0: false}
   - code: "920002"
     name: "万达轴承"
     market: 北交所
-    attributes: {market: 北交所, product: 股票, special_status: 普通, t1: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
-  - code: "600000"
-    name: "浦发银行"
-    market: 上证A股
-    attributes: {market: 上证A股, product: 股票, special_status: 普通, t1: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
-  - code: "000001"
-    name: "平安银行"
-    market: 深证A股
-    attributes: {market: 深证A股, product: 股票, special_status: 普通, t1: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+    attributes: {market: 北交所, product: 股票, special_status: 普通, t0: false, has_nav: false, has_holding: false, orderbook_depth: true, collateral_eligible: false, financing_eligible: false, in_subscription: false}
+  - code: "430019"
+    name: "新松佳和"
+    market: 新三板
+    attributes: {market: 新三板（创新层）, product: 股票, t0: false}
+  - code: "510050"
+    name: "上证50ETF"
+    market: 沪深
+    attributes: {market: 沪深, product: ETF, t0: false}

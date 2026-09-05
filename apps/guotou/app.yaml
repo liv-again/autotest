@@ -5,9 +5,10 @@ verified_versions:
 - version: 10.5.04
   verified_at: '2026-08-26'
 compatibility:
-  min: 10.5.03
-  max_exclusive: 999.999.999
-test_accounts: []
+  min: V10.5.4
+  max_exclusive: V10.5.5
+test_accounts: 
+- {alias: pt, type: 普通, mask: "***0086"}
 environment: env.yaml
 profile: profile.yaml
 prerequisites: prerequisites.yaml

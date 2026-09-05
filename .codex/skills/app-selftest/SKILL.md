@@ -55,12 +55,28 @@ description: AI 驱动 Android App 用 Excel 用例做业务自测——用户�
 }
 ```
 
-`setup`/公共导航动作可以记录在独立的执行轨迹中，但不得写入任何用例的 `actual`。同一 Excel 行包含多个步骤时，步骤结果在该行的 AI 实测结果单元格内按 `S1`、`S2` 换行回填；一个用例跨多行时，每个步骤必须提供对应的 `row/source_row`。没有 `steps` 的旧版单条结果只精确回填指定源行，不再向连续行广播。
+`setup`/公共导航动作可以记录在顶层 `setup_trace` 中，但不得写入任何用例的 `actual`。同一 Excel 行包含多个步骤时，步骤结果在该行的 AI 实测结果单元格内按 `S1`、`S2` 换行回填；一个用例跨多行时，每个步骤必须提供对应的 `row/source_row`。没有 `steps` 的旧版单条结果只精确回填指定源行，不再向连续行广播。
 
-然后调用：
+结果必须由执行器提供逐步骤的 `action → observation → status` 事实链，不能从操作轨迹自动生成通过文案。先用结果构建器执行结构和语义质量门；证据不足时由执行器标记 `🟡待数据`/`⛔阻塞` 并说明原因：
 
 ```bash
-python tools/annotate_excel.py --src <用例文件.xlsx> --results <run>/results.json --out <run>/<用例文件名>_AI自测结果.xlsx --evidence-root <run> --strict
+python tools/build_results.py --input <run>/execution_records.json --out <run>/results.json
+```
+
+构建器会拒绝空 `actual`、通用“已执行操作/已保留截图”占位句、仅复述 action 的结果，以及跨不同用例大量复用的相同结果；默认要求每个步骤或单条结果有可追溯 `evidence`。同一用例的 case-level evidence 会在步骤缺少独立证据时显式继承。
+
+一个 sheet 或模块的首轮测试结束后，先对所有未通过用例做逐条复测。`retest_results.py plan` 默认选择 `fail/partial/blocked/pending/other`，排除 `pass` 和 `☑不适用`；执行器必须按队列一次只跑一个用例，每条复测都重新执行公共 setup，并把新的页面观察和 evidence 写入复测结果，不能把 setup 轨迹写进 `actual`：
+
+```bash
+python tools/retest_results.py plan --results <run>/results.json --scope sheet --scope-name <工作表名> --out <run>/retest_queue.json
+# 执行器逐条消费 queue.cases 后生成 <run>/retest_execution.json
+python tools/retest_results.py merge --results <run>/results.json --plan <run>/retest_queue.json --retest-results <run>/retest_execution.json --out <run>/results.final.json
+```
+
+合并会要求计划中的用例全部有复测结果，最终可见状态以第二轮为准，同时在每个复测用例的 `attempts` 中保留首轮和复测两份完整记录；未通过用例必须先完成这一步，再回填 Excel。然后调用：
+
+```bash
+python tools/annotate_excel.py --src <用例文件.xlsx> --results <run>/results.final.json --out <run>/<用例文件名>_AI自测结果.xlsx --evidence-root <run> --strict
 ```
 
 回填命令返回的 JSON 报告中 `matched` 数量必须与本轮结果数一致；若表头不是常见的“用例 ID/用例名称/步骤”等名称，先读取 Excel 结构并补充 `--header-row`、`--case-id-column` 或 `--case-name-column`。检查输出文件存在、源文件未被覆盖，再进入 `reback/derive/lint/metrics`。

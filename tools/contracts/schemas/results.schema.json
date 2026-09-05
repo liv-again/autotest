@@ -48,7 +48,11 @@
         "evidence": {"$ref": "#/$defs/evidence"},
         "tested_at": {"type": "string"},
         "execution_order": {"type": "integer", "minimum": 1}
-      }
+      },
+      "anyOf": [
+        {"required": ["row"]},
+        {"required": ["source_row"]}
+      ]
     },
     "case": {
       "type": "object",

@@ -58,6 +58,14 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.cell import column_index_from_string
 
+# When invoked as ``python tools/annotate_excel.py``, Python puts ``tools/``
+# (rather than the repository root) on sys.path.  Add the root so the shared
+# quality gate can be imported while preserving normal package imports.
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from tools.results_quality import ResultQualityError, ensure_result_quality
+
 
 SUMMARY_SHEET = "🤖AI自测汇总"
 OUTPUT_HEADERS = (
@@ -205,7 +213,13 @@ def _normalize_evidence_fields(record: dict[str, Any]) -> None:
     record["evidence_paths"] = _as_evidence_paths(raw_evidence)
 
 
-def _normalize_step(item: Any, *, parent: Mapping[str, Any], index: int) -> dict[str, Any]:
+def _normalize_step(
+    item: Any,
+    *,
+    parent: Mapping[str, Any],
+    index: int,
+    strict: bool = False,
+) -> dict[str, Any]:
     if not isinstance(item, Mapping):
         raise AnnotationError(f"第 {index} 个步骤必须是对象，收到: {item!r}")
     step = dict(item)
@@ -213,6 +227,24 @@ def _normalize_step(item: Any, *, parent: Mapping[str, Any], index: int) -> dict
         _first(parent, "case_id", "case_name")
         or f"{_text(parent.get('sheet'))}!{_text(parent.get('row'))}"
     )
+    raw_step_id = _first(step, "step_id", "stepId", "id", "步骤ID", "步骤编号")
+    raw_row = _first(step, "row", "row_number", "rowNumber", "source_row", "sourceRow")
+    raw_status = _first(step, "status", "state", "result_status", "判定")
+    raw_actual = _first(step, "actual", "result", "actual_result", "实测结果", "description")
+    if strict:
+        missing: list[str] = []
+        if not _text(raw_step_id):
+            missing.append("step_id")
+        if raw_row in (None, ""):
+            missing.append("row/source_row")
+        if not _text(raw_status):
+            missing.append("status")
+        if not _text(raw_actual):
+            missing.append("actual")
+        if missing:
+            raise AnnotationError(
+                f"严格模式结果质量校验失败 (strict 模式): 步骤 {parent_identity}/S{index} 缺少 {', '.join(missing)}"
+            )
     step["step_index"] = _as_int(
         _first(step, "step_index", "stepIndex", "index", "序号")
     ) or index
@@ -236,10 +268,22 @@ def _normalize_step(item: Any, *, parent: Mapping[str, Any], index: int) -> dict
         raise AnnotationError(f"步骤 {step['step_id']} 的 depends_on 必须是列表")
     step["tested_at"] = _text(_first(step, "tested_at", "testedAt", "time", "date", "测试时间"))
     _normalize_evidence_fields(step)
+    if not step["evidence"] and parent.get("evidence"):
+        # Case-level evidence is explicitly inherited only when the step did
+        # not provide its own evidence.  This keeps evidence traceable without
+        # losing screenshots collected at the case level.
+        step["evidence"] = list(parent["evidence"])
+        step["evidence_paths"] = list(parent.get("evidence_paths", []))
     return step
 
 
-def normalize_results(document: Any) -> list[dict[str, Any]]:
+def normalize_results(
+    document: Any,
+    *,
+    strict: bool = False,
+    require_evidence: bool | None = None,
+    duplicate_threshold: int = 3,
+) -> list[dict[str, Any]]:
     """把常见的结果外壳归一化为结果记录列表。
 
     支持 ``[{...}]``、``{"cases": [{...}]}``、``{"results": [{...}]}``。
@@ -263,9 +307,13 @@ def normalize_results(document: Any) -> list[dict[str, Any]]:
         if not isinstance(item, Mapping):
             raise AnnotationError(f"第 {index} 条结果必须是对象，收到: {item!r}")
         record = dict(item)
+        raw_sheet = _first(record, "sheet", "sheet_name", "sheetName", "工作表")
+        raw_row = _first(record, "row", "row_number", "rowNumber", "source_row", "sourceRow")
+        raw_status = _first(record, "status", "state", "result_status", "判定")
+        raw_actual = _first(record, "actual", "result", "actual_result", "实测结果", "description")
         record["case_id"] = _text(_first(record, "case_id", "caseId", "id", "tc_id", "tcId")) or None
         record["case_name"] = _text(_first(record, "case_name", "caseName", "name", "用例名称")) or None
-        record["sheet"] = _text(_first(record, "sheet", "sheet_name", "sheetName", "工作表")) or None
+        record["sheet"] = _text(raw_sheet) or None
         record["row"] = _as_int(_first(record, "row", "row_number", "rowNumber", "source_row", "sourceRow"))
         record["status"] = _text(_first(record, "status", "state", "result_status", "判定")) or "·待跑"
         record["actual"] = _text(_first(record, "actual", "result", "actual_result", "实测结果", "description"))
@@ -281,18 +329,65 @@ def normalize_results(document: Any) -> list[dict[str, Any]]:
             raise AnnotationError(f"用例 {record.get('case_id') or record.get('case_name') or index} 的 steps 必须是列表")
         else:
             record["steps"] = [
-                _normalize_step(step, parent=record, index=step_index)
+                _normalize_step(step, parent=record, index=step_index, strict=strict)
                 for step_index, step in enumerate(raw_steps, start=1)
             ]
+        if strict:
+            identity = record.get("case_id") or record.get("case_name") or f"结果#{index}"
+            missing: list[str] = []
+            if not _text(raw_sheet):
+                missing.append("sheet")
+            if raw_row in (None, ""):
+                missing.append("row/source_row")
+            if not _text(raw_status):
+                missing.append("status")
+            if not record["steps"] and not _text(raw_actual):
+                missing.append("actual")
+            if missing:
+                raise AnnotationError(
+                    f"严格模式结果质量校验失败 (strict 模式): 用例 {identity} 缺少 {', '.join(missing)}"
+                )
+        if record["steps"]:
+            # Preserve step evidence at the parent level for summaries and for
+            # callers that only inspect the case object.
+            for step in record["steps"]:
+                for field in ("evidence", "evidence_paths"):
+                    merged = list(record.get(field, []))
+                    for value in step.get(field, []):
+                        if value not in merged:
+                            merged.append(value)
+                    record[field] = merged
         normalized.append(record)
+    if strict:
+        if require_evidence is None:
+            require_evidence = True
+        try:
+            ensure_result_quality(
+                normalized,
+                duplicate_threshold=duplicate_threshold,
+                require_evidence=require_evidence,
+            )
+        except ResultQualityError as exc:
+            raise AnnotationError(f"严格模式结果质量校验失败 (strict 模式): {exc}") from exc
     return normalized
 
 
-def load_results(path: str | os.PathLike[str]) -> list[dict[str, Any]]:
+def load_results(
+    path: str | os.PathLike[str],
+    *,
+    strict: bool = False,
+    require_evidence: bool | None = None,
+    duplicate_threshold: int = 3,
+) -> list[dict[str, Any]]:
     """从 JSON/YAML 结果文件读取并归一化结果。"""
 
     result_path = Path(path).expanduser().resolve()
-    return normalize_results(_load_result_document(result_path))
+    return normalize_results(
+        _load_result_document(result_path),
+        strict=strict,
+        require_evidence=require_evidence,
+        duplicate_threshold=duplicate_threshold,
+    )
 
 
 def _header_kind(value: Any) -> str | None:
@@ -605,6 +700,8 @@ def _set_cell_value(cell: Any, value: Any, *, fill: PatternFill | None = None) -
 
 def _status_bucket(status: Any) -> str:
     normalized = _norm(status)
+    if "部分通过" in normalized or "部分成功" in normalized:
+        return "partial"
     if "失败" in normalized or "❌" in normalized or "不通过" in normalized:
         return "fail"
     if "阻塞" in normalized or "⛔" in normalized:
@@ -629,12 +726,15 @@ def _rollup_status(statuses: Sequence[Any]) -> str:
         return "❌失败"
     if "blocked" in buckets:
         return "⛔阻塞"
+    if "partial" in buckets:
+        return next(value for value, bucket in zip(values, buckets) if bucket == "partial")
     if "pending" in buckets:
         return next(value for value, bucket in zip(values, buckets) if bucket == "pending")
-    if all(bucket == "skip" for bucket in buckets):
-        return "⏭跳过"
-    if all(bucket == "pass" for bucket in buckets):
-        return "✅通过"
+    # Keep the executor's original label when all steps have the same
+    # semantic bucket.  In particular, do not silently rewrite
+    # ``☑不适用`` as ``⏭跳过``.
+    if all(bucket == buckets[0] for bucket in buckets):
+        return values[0]
     return values[0]
 
 
@@ -735,6 +835,8 @@ def annotate_workbook(
     case_name_column: str | int | None = None,
     generated_at: str | None = None,
     strict: bool = False,
+    require_evidence: bool | None = None,
+    duplicate_threshold: int = 3,
     append_summary: bool = True,
     evidence_width: int = 150,
 ) -> dict[str, Any]:
@@ -743,8 +845,11 @@ def annotate_workbook(
     ``results`` 可以直接是结果列表，也可以是 ``{"cases": [...]}`` 对象。
     常见中文/英文表头会自动识别；遇到自定义表头时传入 ``header_row`` 和
     ``case_id_column``/``case_name_column``，列参数可用列号、Excel 字母或表头文字。
-    ``strict=True`` 时，只要存在未匹配结果就抛出 :class:`AnnotationError`；
-    歧义定位无论 strict 与否都会抛错。
+    ``strict=True`` 时，回填前会执行结果质量门：步骤必须带有
+    ``step_id``、``row/source_row``、``status``、``actual``，且不能使用通用
+    操作占位句；默认还要求每个步骤/单条结果至少有一项 evidence。只要
+    存在质量问题或未匹配结果，就抛出 :class:`AnnotationError`，不会保存
+    输出文件。歧义定位无论 strict 与否都会抛错。
     """
 
     source_path = Path(src).expanduser().resolve()
@@ -759,9 +864,19 @@ def annotate_workbook(
     if output_path == source_path:
         raise AnnotationError("输出文件不能覆盖源用例文件，请指定不同的 --out 路径")
     if isinstance(results, Mapping):
-        result_records = normalize_results(results)
+        result_records = normalize_results(
+            results,
+            strict=strict,
+            require_evidence=require_evidence,
+            duplicate_threshold=duplicate_threshold,
+        )
     else:
-        result_records = normalize_results(list(results))
+        result_records = normalize_results(
+            list(results),
+            strict=strict,
+            require_evidence=require_evidence,
+            duplicate_threshold=duplicate_threshold,
+        )
     result_root = Path(result_dir).expanduser().resolve() if result_dir else None
     evidence_root_path = Path(evidence_root).expanduser().resolve() if evidence_root else None
     generated = generated_at or datetime.now().astimezone().isoformat(timespec="seconds")
@@ -986,6 +1101,13 @@ def annotate_workbook(
     if strict and report["unmatched"]:
         details = ", ".join(item["identity"] for item in report["unmatched"])
         raise AnnotationError(f"存在未匹配结果，strict 模式拒绝保存: {details}")
+    if strict and report["warnings"]:
+        details = "; ".join(report["warnings"])
+        raise AnnotationError(f"严格模式证据校验失败，拒绝保存: {details}")
+    if strict and len(report["matched"]) != len(result_records):
+        raise AnnotationError(
+            f"严格模式 matched 数量不一致，拒绝保存: matched={len(report['matched'])}, results={len(result_records)}"
+        )
     if append_summary:
         _write_summary(wb, report, source_path, generated)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1008,7 +1130,22 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--case-name-column", help="自定义用例名称列：列号、Excel 字母或表头文字")
     parser.add_argument("--date", help="统一回填时间；不传则使用当前本地时间")
     parser.add_argument("--evidence-width", type=int, default=150, help="嵌入证据图片宽度，默认 150px")
-    parser.add_argument("--strict", action="store_true", help="有未匹配结果时拒绝保存")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="启用结果质量门和未匹配保护；任何问题都拒绝保存",
+    )
+    parser.add_argument(
+        "--allow-missing-evidence",
+        action="store_true",
+        help="严格模式下允许没有 evidence（不推荐；默认会阻止保存）",
+    )
+    parser.add_argument(
+        "--duplicate-threshold",
+        type=int,
+        default=3,
+        help="严格模式下判定跨用例重复 actual 的最少用例数，默认 3",
+    )
     parser.add_argument("--no-summary", action="store_true", help="不生成 🤖AI自测汇总 工作表")
     return parser
 
@@ -1048,6 +1185,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             case_name_column=args.case_name_column,
             generated_at=args.date,
             strict=args.strict,
+            require_evidence=False if args.allow_missing_evidence else None,
+            duplicate_threshold=args.duplicate_threshold,
             append_summary=not args.no_summary,
             evidence_width=args.evidence_width,
         )

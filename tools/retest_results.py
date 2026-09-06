@@ -34,6 +34,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.annotate_excel import AnnotationError, normalize_results
+from tools.execution_gate import ExecutionGateError, ensure_execution_contract
 from tools.results_quality import status_bucket
 
 
@@ -85,10 +86,14 @@ def _normalize(
     try:
         return normalize_results(
             document,
-            strict=strict,
-            require_evidence=require_evidence if strict else None,
-            duplicate_threshold=duplicate_threshold,
-        )
+        strict=strict,
+        require_evidence=require_evidence if strict else None,
+        duplicate_threshold=duplicate_threshold,
+        # The retest plan is checked separately for selected-case
+        # completeness; merge_retests applies the shared action/evidence gate
+        # without requiring a second top-level manifest.
+        require_execution_contract=False,
+    )
     except (AnnotationError, TypeError, ValueError) as exc:
         mode = "严格复测结果" if strict else "首轮结果"
         raise RetestError(f"{mode}无法归一化: {exc}") from exc
@@ -269,6 +274,13 @@ def merge_retests(
         require_evidence=require_evidence,
         duplicate_threshold=duplicate_threshold,
     )
+    try:
+        # The plan itself is the completeness manifest for a retest.  The
+        # generic execution gate still enforces action traces, observations,
+        # blocker reasons and independent evidence for every retry record.
+        ensure_execution_contract(retest_records, None, require_manifest=False)
+    except ExecutionGateError as exc:
+        raise RetestError(f"复测执行完整性门禁失败: {exc}") from exc
     initial_by_key = _index_records(initial_records, "首轮结果")
     retest_by_key = _index_records(retest_records, "复测结果")
 
@@ -330,6 +342,12 @@ def merge_retests(
     }
     if isinstance(initial_document, Mapping) and initial_document.get("setup_trace") is not None:
         result["setup_trace"] = copy.deepcopy(initial_document["setup_trace"])
+    if isinstance(initial_document, Mapping) and initial_document.get("execution_manifest") is not None:
+        # Keep the original selected-case scope on the merged final document;
+        # retesting changes attempts, not the run's coverage contract.
+        result["execution_manifest"] = copy.deepcopy(initial_document["execution_manifest"])
+    if isinstance(initial_document, Mapping) and initial_document.get("execution_mode") is not None:
+        result["execution_mode"] = initial_document["execution_mode"]
     if isinstance(retest_document, Mapping) and retest_document.get("setup_trace") is not None:
         result["retest_setup_trace"] = copy.deepcopy(retest_document["setup_trace"])
     return result

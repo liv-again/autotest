@@ -1,14 +1,18 @@
-# workflow — 工作流（取自 `自测经验总结.md` §一，已跑通、照这个来最省心）
+# workflow — 工作流（模块级规划、行级执行版）
 
 ## 主链路
 
 ```
-解析Excel(分档) → 按"屏"分组用例 → 串行驱动手机(一屏多用例) → 元素树断言/视觉兜底 + 截图取证 → 生成results.json → 通用回填器写回标注Excel → 记性价比(metrics)
+解析Excel(分档) → 模块级规划 → 冻结 selection → 按 Excel 行号逐条执行 → 元素树断言/视觉兜底 + 独立截图取证 → 每条立即落盘 → 生成 results.json → 模块异常集中分析 → 通用回填器写回标注Excel → 记性价比(metrics)
 ```
 
 - **解析Excel(分档)**：按分档口径（见 `tiering.md`）过滤出本轮范围，默认只取 `优先级==high`。
-- **按屏分组**：把用例按会落在同一个页面/入口的分组，进一次详情页就把该屏能验的用例全验掉，比逐例导航省数倍成本。
-- **串行驱动手机**：`tools/droid.py` 一次一步操作真机（adb + uiautomator），不并发操作同一设备。
+- **模块级规划**：LLM 每个 Sheet/模块只读取一次 Excel，输出 `module_plan.json`；计划包含入口、步骤名称、前置条件、操作描述、参数、预期结果和行号。
+- **按 Excel 行逐条执行**：同一页面/入口的用例也必须按源文件行号逐条执行；公共导航方案可以复用，但不能合并业务动作、广播页面截图或依赖上一条残留状态。
+- **串行驱动手机**：确定性执行器用 `tools/droid.py` 一次一步操作真机（adb + uiautomator），每条开始前复位状态；同一模块首次进入时冷启动一次，后续行通过有限返回、模块入口和状态断言进行软复位；只有软复位失败才冷启动恢复。LLM 不参与每行重复规划。
+- **目标页门禁顺序**：每行固定执行“当前状态复位 → 判断目标页面 → 是则执行当前行操作 → 否则执行公共导航 → 重新校验目标页面 → 进入成功才执行、进入失败阻塞且不执行”；导航后的页面断言必须在本行动作前完成。
+- **异常集中分析**：模块完成后只把失败、阻塞、待验证和低置信度记录生成 `exception_queue.json` 交给 LLM，不重复发送通过用例的完整证据。
+- **逐条落盘**：每条用例完成后追加 `execution_records.jsonl` 并更新 `execution_state.json`；暂停可以从最后一条已持久化行恢复。
 - **元素树断言 + 截图取证**：断言优先用 `droid.py has "关键词"`（退出码判断，内部比对不看输出，规避终端乱码）；dump 找不到图标/自定义绘制目标时，按 `visual-targets.md` 使用截图和 `droid.py tap --bbox` 兜底；需要留痕的关键结果截图（`droid.py shot`），每个用例留 1 张最能说明问题的即可。
 - **生成结果 → 质量门 → 逐条复测 → 回填标注Excel**：执行器必须在每个步骤结束后提供独立的 `action → observation → status` 事实链，公共导航写入顶层 `setup_trace`，不得混入用例 `actual`。先调用 `python tools/build_results.py --input execution_records.json --out results.json`，由质量门拒绝空 `actual`、通用操作占位句、仅复述 action、跨用例大量复用结果及缺失 evidence。一个 sheet/模块完成后调用 `python tools/retest_results.py plan ...` 生成单用例队列，逐条重新 setup 和执行未通过用例，再用 `retest_results.py merge ...` 合并；合并保留首轮与复测两轮历史，最终回填使用第二轮状态。最后调用 `python tools/annotate_excel.py --src cases.xlsx --results results.final.json --out annotated.xlsx --evidence-root <run> --strict`。严格回填会拒绝证据路径不存在、未匹配结果或 `matched` 数量不一致。
 - **记性价比**：跑完一批用 `tools/metrics.py` 记 output token / 上下文税(cache_read) / 单行成本，写入 `runs/metrics.md`；超阈值会由 `metrics.py` 里接线的 `assess` 自动打印提醒（考虑新开精简会话/固化 Maestro）。
@@ -18,6 +22,9 @@
 | 工具 | 作用 |
 |---|---|
 | `droid.py` | adb 驱动助手：`current/screen/find/has/tap/type/key/swipe/shot/dump-xml`；`tap --bbox` 支持视觉模型返回框中心点击，是真机驱动与断言的唯一入口。 |
+| `module_planner.py` | 每个 Sheet/模块只解析一次 Excel，生成 `module_plan.json`；保留完整字段、`source_order` 和逐行执行计划。 |
+| `execution_journal.py` | 逐条追加 `execution_records.jsonl`、更新 `execution_state.json`，支持暂停恢复和完成后生成正式执行记录。 |
+| `exception_queue.py` | 从模块结果提取失败/阻塞/待验证/低置信度用例，生成供 LLM 集中分析的 `exception_queue.json`。 |
 | `annotate_excel.py` | 通用 Excel 回填 CLI/API：按行号/用例 ID/名称定位，追加或更新 AI 列、内联证据并生成汇总；不负责决定本轮筛选范围。 |
 | `retest_results.py` | 首轮 sheet/模块完成后生成未通过用例的单条复测队列，并将复测结果合并为最终结果；保留 `attempts` 两轮历史，要求复测定位和证据完整。 |
 | `metrics.py` | `now`/`tokens SINCE UNTIL`：按会话 transcript 算 token/成本；`context_tax_metrics`/`remind` 是 D2 上下文税阈值提醒的真实触发点。 |

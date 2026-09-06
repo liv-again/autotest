@@ -29,7 +29,10 @@ def _strict_case(*, actual, status="✅通过", evidence=None, case_id="TC-001")
         "case_id": case_id,
         "status": status,
         "actual": actual,
-        "evidence": evidence or ["ui assertion: 查询页面标题"],
+        "evidence": evidence or [f"ui assertion: {case_id}"],
+        "action_trace": [
+            {"type": "tap", "target": case_id, "result": "success"}
+        ],
     }
 
 
@@ -48,6 +51,25 @@ def test_strict_rejects_generic_actual_before_saving(tmp_path):
     assert not output.exists()
 
 
+def test_strict_rejects_action_echo_with_page_labels(tmp_path):
+    source = tmp_path / "cases.xlsx"
+    output = tmp_path / "out.xlsx"
+    _make_workbook(source)
+
+    with pytest.raises(AnnotationError, match="质量校验"):
+        annotate_workbook(
+            source,
+            [
+                _strict_case(
+                    actual="Excel行2已执行：点击查询\n输入关键字；当前页面观察：query_page、结果列表"
+                )
+            ],
+            output,
+            strict=True,
+        )
+    assert not output.exists()
+
+
 def test_strict_preserves_not_applicable_status_and_inherits_case_evidence(tmp_path):
     source = tmp_path / "cases.xlsx"
     output = tmp_path / "out.xlsx"
@@ -58,6 +80,11 @@ def test_strict_preserves_not_applicable_status_and_inherits_case_evidence(tmp_p
     report = annotate_workbook(
         source,
         {
+            "execution_manifest": {
+                "mode": "full",
+                "expected_count": 1,
+                "selected_cases": [{"sheet": "用例", "row": 2, "case_id": "TC-001"}],
+            },
             "cases": [
                 {
                     "sheet": "用例",
@@ -117,9 +144,44 @@ def test_strict_rejects_reused_actual_across_unrelated_cases(tmp_path):
     assert not output.exists()
 
 
+def test_contextual_repeat_actual_is_allowed_for_independent_rows():
+    cases = []
+    selected = []
+    for row, case_id in ((2, "TC-001"), (3, "TC-002"), (4, "TC-003")):
+        case = _strict_case(actual="当前页面显示港股首页", case_id=case_id)
+        case.update(
+            {
+                "row": row,
+                "action": f"执行第 {row} 行业务动作",
+                "expected": f"第 {row} 行预期结果",
+                "evidence": [f"shots/{row}.png"],
+            }
+        )
+        cases.append(case)
+        selected.append({"sheet": "用例", "row": row, "case_id": case_id})
+
+    document = build_results(
+        {
+            "execution_manifest": {
+                "mode": "full",
+                "expected_count": len(selected),
+                "selected_cases": selected,
+            },
+            "cases": cases,
+        }
+    )
+
+    assert len(document["cases"]) == 3
+
+
 def test_build_results_preserves_setup_trace_and_inherits_evidence():
     document = build_results(
         {
+            "execution_manifest": {
+                "mode": "full",
+                "expected_count": 1,
+                "selected_cases": [{"sheet": "用例", "row": 2, "case_id": "TC-001"}],
+            },
             "cases": [
                 {
                     "sheet": "用例",
@@ -133,7 +195,10 @@ def test_build_results_preserves_setup_trace_and_inherits_evidence():
                             "step_index": 1,
                             "row": 2,
                             "status": "✅通过",
-                            "actual": "点击查询后进入查询页面并显示结果列表",
+                                "actual": "点击查询后进入查询页面并显示结果列表",
+                                "action_trace": [
+                                    {"type": "tap", "target": "查询", "result": "success"}
+                                ],
                         }
                     ],
                 }
@@ -162,3 +227,79 @@ def test_build_results_never_fills_missing_actual():
                 ]
             }
         )
+
+
+def test_build_results_requires_global_execution_manifest_and_action_trace():
+    case = _strict_case(actual="页面显示查询结果")
+    with pytest.raises(BuildResultsError, match="execution_manifest"):
+        build_results({"cases": [case]})
+
+    case_without_trace = dict(case)
+    case_without_trace.pop("action_trace")
+    with pytest.raises(BuildResultsError, match="action_trace"):
+        build_results(
+            {
+                "execution_manifest": {
+                    "mode": "full",
+                    "expected_count": 1,
+                    "selected_cases": [{"sheet": "用例", "row": 2, "case_id": "TC-001"}],
+                },
+                "cases": [case_without_trace],
+            }
+        )
+
+
+def test_build_results_rejects_unexecuted_and_reused_evidence():
+    not_executed = _strict_case(actual="尚未执行", status="未执行")
+    with pytest.raises(BuildResultsError, match="未完成执行"):
+        build_results(
+            {
+                "execution_manifest": {
+                    "mode": "full",
+                    "expected_count": 1,
+                    "selected_cases": [{"sheet": "用例", "row": 2, "case_id": "TC-001"}],
+                },
+                "cases": [not_executed],
+            }
+        )
+
+    first = _strict_case(actual="页面显示查询结果", case_id="TC-001")
+    second = _strict_case(actual="页面显示排序结果", case_id="TC-002")
+    second["row"] = 3
+    second["evidence"] = list(first["evidence"])
+    with pytest.raises(BuildResultsError, match="独立结果证据"):
+        build_results(
+            {
+                "execution_manifest": {
+                    "mode": "full",
+                    "expected_count": 2,
+                    "selected_cases": [
+                        {"sheet": "用例", "row": 2, "case_id": "TC-001"},
+                        {"sheet": "用例", "row": 3, "case_id": "TC-002"},
+                    ],
+                },
+                "cases": [first, second],
+            }
+        )
+
+
+def test_page_batching_remains_allowed_when_cases_are_independently_traced():
+    first = _strict_case(actual="页面显示查询结果", case_id="TC-001")
+    second = _strict_case(actual="页面显示排序结果", case_id="TC-002")
+    second["row"] = 3
+    document = build_results(
+        {
+            "execution_manifest": {
+                "mode": "full",
+                "expected_count": 2,
+                "selected_cases": [
+                    {"sheet": "用例", "row": 2, "case_id": "TC-001"},
+                    {"sheet": "用例", "row": 3, "case_id": "TC-002"},
+                ],
+            },
+            "setup_trace": [{"kind": "setup", "action": "进入查询页"}],
+            "cases": [first, second],
+        }
+    )
+    assert document["execution_manifest"]["expected_count"] == 2
+    assert len(document["cases"]) == 2

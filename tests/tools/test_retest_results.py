@@ -14,6 +14,9 @@ def _case(row, case_id, status, actual, *, module="行情", evidence=None):
         "status": status,
         "actual": actual,
         "evidence": evidence or [f"assertions/{case_id}"],
+        "action_trace": [
+            {"type": "tap", "target": case_id, "result": "success"}
+        ],
     }
 
 

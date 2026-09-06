@@ -35,6 +35,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.annotate_excel import normalize_results
+from tools.execution_gate import ExecutionGateError, ensure_execution_contract
 
 
 class BuildResultsError(ValueError):
@@ -88,8 +89,10 @@ def build_results(
     execution_records: Any,
     *,
     setup_trace: Sequence[Mapping[str, Any]] | None = None,
+    execution_manifest: Mapping[str, Any] | None = None,
     require_evidence: bool = True,
     duplicate_threshold: int = 3,
+    require_execution_contract: bool = True,
 ) -> dict[str, Any]:
     """Return a validated schema-2 result document.
 
@@ -104,19 +107,37 @@ def build_results(
     try:
         cases = normalize_results(
             execution_records,
-            strict=True,
-            require_evidence=require_evidence,
-            duplicate_threshold=duplicate_threshold,
-        )
+                strict=True,
+                require_evidence=require_evidence,
+                duplicate_threshold=duplicate_threshold,
+                require_execution_contract=False,
+            )
     except (ValueError, TypeError) as exc:
         raise BuildResultsError(str(exc)) from exc
 
+    manifest = execution_manifest
+    if manifest is None and isinstance(execution_records, Mapping):
+        candidate = execution_records.get("execution_manifest")
+        if candidate is not None:
+            manifest = candidate
+    if require_execution_contract:
+        try:
+            ensure_execution_contract(cases, manifest)
+        except ExecutionGateError as exc:
+            raise BuildResultsError(f"执行完整性门禁失败: {exc}") from exc
+
+    result_mode = "full" if require_execution_contract else "intermediate"
+    if require_execution_contract and isinstance(manifest, Mapping) and manifest.get("mode") == "sample":
+        result_mode = "sample"
     document: dict[str, Any] = {
         "schema_version": "2.0",
+        "execution_mode": result_mode,
         "cases": _drop_none(cases),
     }
     if trace is not None:
         document["setup_trace"] = _drop_none(trace)
+    if manifest is not None:
+        document["execution_manifest"] = _drop_none(manifest)
     return document
 
 
@@ -125,16 +146,20 @@ def write_results(
     out: str | Path,
     *,
     setup_trace: Sequence[Mapping[str, Any]] | None = None,
+    execution_manifest: Mapping[str, Any] | None = None,
     require_evidence: bool = True,
     duplicate_threshold: int = 3,
+    require_execution_contract: bool = True,
 ) -> dict[str, Any]:
     """Build and atomically write a UTF-8 JSON result document."""
 
     document = build_results(
         execution_records,
         setup_trace=setup_trace,
+        execution_manifest=execution_manifest,
         require_evidence=require_evidence,
         duplicate_threshold=duplicate_threshold,
+        require_execution_contract=require_execution_contract,
     )
     output = Path(out).expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -162,6 +187,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=3,
         help="判定跨用例重复 actual 的最少用例数，默认 3",
     )
+    parser.add_argument(
+        "--allow-incomplete",
+        action="store_true",
+        help="允许缺少 execution_manifest 或未执行用例；仅用于中间/抽样结果，不得作为最终结果",
+    )
     return parser
 
 
@@ -185,6 +215,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.out,
             require_evidence=not args.allow_missing_evidence,
             duplicate_threshold=args.duplicate_threshold,
+            require_execution_contract=not args.allow_incomplete,
         )
         print(json.dumps({"out": str(Path(args.out).expanduser().resolve()), "cases": len(output["cases"])}, ensure_ascii=False))
         return 0

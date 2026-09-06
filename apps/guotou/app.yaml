@@ -1,6 +1,6 @@
 slug: guotou
 packages:
-- com.hexin.plat.android.GuotouSecurity
+- com.hexin.plat.android.AnxinSecurity
 verified_versions:
 - version: 10.5.04
   verified_at: '2026-08-26'

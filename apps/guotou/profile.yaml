@@ -20,10 +20,10 @@ entries:
   evidence_run: user-confirmed/2026-09-01
   status: verified
 - key: quote.hk_main
-  path: 行情→港股；页面下滑可找到AH股、港股主板、港股创业板；顶部可见恒生指数/国企指数/沪深港通
-  last_verified: '2026-09-01'
+  path: 行情→港股；顶部恒生指数/国企指数/沪、深港通；下方行业板块、AH股、港股主板、港股创业板分组；页面支持滚动，分组标签可收起
+  last_verified: '2026-09-07'
   app_version: V10.5.4
-  evidence_run: user-confirmed/2026-09-01
+  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
   status: verified
 - key: quote.other_main
   path: 行情→其他；基金/个股/债券→上证A股列表
@@ -62,11 +62,11 @@ entries:
   evidence_run: outputs/2026-08-27-guotou-full/shots-r3
   status: verified
 - key: quote.hk_ah_list
-  path: 行情→港股→AH股更多→首次温馨提示→点击我知道了→AH股比价列表；字段最新/涨幅/溢价率；支持搜索、列表点击和横竖屏
-  last_verified: '2026-08-27'
+  path: 行情→港股→AH股更多→AH股比价列表；本轮观察到页面内溢价率说明文案和关闭图标，未观察到预期模态“我知道了”；支持股票详情、搜索、列表滚动和涨幅排序；点击刷新后等待5秒未确认数据变化
+  last_verified: '2026-09-07'
   app_version: V10.5.4
-  evidence_run: outputs/2026-08-27-guotou-full/shots-r3
-  status: verified
+  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+  status: unverified
 - key: quote.index_extended
   path: 行情→股指；国内指数/股指期货/其他指数均可从模块更多进入列表；股指期货说明图标进入介绍页；列表支持搜索、详情和横竖屏
   last_verified: '2026-08-27'
@@ -97,12 +97,103 @@ entries:
   app_version: V10.5.4
   evidence_run: outputs/2026-08-27-guotou-full/shots-r3
   status: verified
+- key: quote.hk_connect_hkgt_sh
+  path: 行情→港股→沪、深港通→港股通；港股通(沪)额度及资金流入可见；港股通(沪)列表支持更多进入独立列表、股票详情、滚动和涨幅排序
+  last_verified: '2026-09-07'
+  app_version: V10.5.4
+  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+  status: verified
+- key: quote.hk_board_main
+  path: 行情→港股→港股主板展开→更多；独立列表显示最新/涨幅/总市值，支持股票详情、滚动和涨幅排序
+  last_verified: '2026-09-07'
+  app_version: V10.5.4
+  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+  status: verified
+- key: quote.hk_board_growth
+  path: 行情→港股→港股创业板展开→更多；独立列表显示最新/涨幅/总市值，支持滚动和涨幅排序；列表股票可进入详情，但本轮新达控股详情未见一档买卖盘
+  last_verified: '2026-09-07'
+  app_version: V10.5.4
+  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+  status: unverified
+- key: quote.hk_stock_detail
+  path: 行情→港股通(沪)/AH股/港股主板列表→股票详情；可见代码、分时、新闻/盘口/公告/简况/财务页签及底部恒生指数；不同港股标的的盘口展示存在差异
+  last_verified: '2026-09-07'
+  app_version: V10.5.4
+  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+  status: unverified
+- key: quote.hk_connect_hkgt_sz
+  path: 行情→港股→沪、深港通→下滑港股通(沪)列表暴露港股通(深)→点击港股通(深)右侧更多→港股通(深)独立列表
+  last_verified: '2026-09-07'
+  app_version: V10.5.4
+  evidence_run: user-confirmed/2026-09-07
+  status: verified
 capabilities:
 - key: cap.quote.refresh_check
   supported: true
-  note: 行情刷新校验方式：先截取第一张截图，记录预期结果中指定的数据；等待5秒后截取第二张截图， 仅对比指定数据是否发生变化。若发生变化，继续后续校验；若未变化，再截取第三张截图，
-    若仍未变化则将该校验标记为跳过，不判定为失败。actual中注明实际对比的数据和重试结果。
-  last_verified: '2026-08-27'
-  app_version: 10.5.4
+  note: 行情刷新校验按先后截图对比指定数据；本轮AH股比价刷新按钮可点击，等待5秒后首行数据未变化，未完成第三次截图，因此本次刷新结果未确认。
+  last_verified: '2026-09-07'
+  app_version: V10.5.4
   status: unverified
-verified_chains: []
+  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+- key: cap.quote.hk_list_interactions
+  supported: true
+  note: 本轮确认港股通(沪)、AH股、港股主板和港股创业板列表可进入；已观察到列表滚动及按涨幅排序。
+  last_verified: '2026-09-07'
+  app_version: V10.5.4
+  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+  status: verified
+- key: cap.quote.hk_group_toggle
+  supported: false
+  note: AH股、港股主板、港股创业板标签的收起状态可观察；行业板块标签点击后未加载子行，且一次点击实际进入行业板块更多页，四分组完整展开/收起能力未确认。
+  last_verified: '2026-09-07'
+  app_version: V10.5.4
+  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+  status: unverified
+- key: cap.quote.hk_color_coding
+  supported: true
+  note: 港股主界面截图中上涨值显示红色、下跌值显示绿色、平盘值显示黑色；恒生指数和国企指数下跌值为绿色。
+  last_verified: '2026-09-07'
+  app_version: V10.5.4
+  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+  status: verified
+- key: cap.quote.hk_stock_detail_variants
+  supported: false
+  note: 港股通(沪)、AH股和港股主板详情页可见分时及新闻/盘口/公告/简况/财务页签；港股创业板新达控股详情页未见预期一档买卖盘，因此不同标的详情展示未完全满足统一盘口能力。
+  last_verified: '2026-09-07'
+  app_version: V10.5.4
+  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+  status: unverified
+verified_chains:
+- key: chain.hk_hkgt_sh_list_ops
+  steps:
+  - 行情→港股
+  - 沪、深港通→港股通
+  - 港股通(沪)股票详情
+  - 返回港股通(沪)
+  - 更多进入港股通(沪)独立列表
+  - 列表滚动
+  - 按涨幅排序
+  last_verified: '2026-09-07'
+  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+  status: verified
+- key: chain.hk_ah_list_ops
+  steps:
+  - 行情→港股→AH股更多
+  - AH股比价列表
+  - AH股股票详情
+  - 搜索
+  - 列表滚动
+  - 按涨幅排序
+  last_verified: '2026-09-07'
+  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+  status: unverified
+- key: chain.hk_board_list_ops
+  steps:
+  - 行情→港股→港股主板或港股创业板展开
+  - 更多进入独立列表
+  - 列表滚动
+  - 按涨幅排序
+  - 港股主板股票详情
+  last_verified: '2026-09-07'
+  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+  status: verified

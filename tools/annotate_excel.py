@@ -65,6 +65,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.results_quality import ResultQualityError, ensure_result_quality
+from tools.execution_gate import ExecutionGateError, ensure_execution_contract
 
 
 SUMMARY_SHEET = "🤖AI自测汇总"
@@ -117,8 +118,11 @@ STATUS_COLORS = {
     "⚠": "FFEB9C",
     "待数据": "FFEB9C",
     "待测试": "FFEB9C",
-    "待跑": "FFEB9C",
     "🟡": "FFEB9C",
+    "not_executed": "F4CCCC",
+    "未执行": "F4CCCC",
+    "未完成": "F4CCCC",
+    "待跑": "F4CCCC",
     "🟢": "C6EFCE",
     "skip": "D9E1F2",
     "跳过": "D9E1F2",
@@ -283,6 +287,7 @@ def normalize_results(
     strict: bool = False,
     require_evidence: bool | None = None,
     duplicate_threshold: int = 3,
+    require_execution_contract: bool | None = None,
 ) -> list[dict[str, Any]]:
     """把常见的结果外壳归一化为结果记录列表。
 
@@ -359,6 +364,8 @@ def normalize_results(
                     record[field] = merged
         normalized.append(record)
     if strict:
+        if require_execution_contract is None:
+            require_execution_contract = True
         if require_evidence is None:
             require_evidence = True
         try:
@@ -369,6 +376,12 @@ def normalize_results(
             )
         except ResultQualityError as exc:
             raise AnnotationError(f"严格模式结果质量校验失败 (strict 模式): {exc}") from exc
+        if require_execution_contract:
+            manifest = document.get("execution_manifest") if isinstance(document, Mapping) else None
+            try:
+                ensure_execution_contract(normalized, manifest)
+            except ExecutionGateError as exc:
+                raise AnnotationError(f"严格模式执行完整性校验失败 (strict 模式): {exc}") from exc
     return normalized
 
 
@@ -378,6 +391,7 @@ def load_results(
     strict: bool = False,
     require_evidence: bool | None = None,
     duplicate_threshold: int = 3,
+    require_execution_contract: bool | None = None,
 ) -> list[dict[str, Any]]:
     """从 JSON/YAML 结果文件读取并归一化结果。"""
 
@@ -387,6 +401,7 @@ def load_results(
         strict=strict,
         require_evidence=require_evidence,
         duplicate_threshold=duplicate_threshold,
+        require_execution_contract=require_execution_contract,
     )
 
 
@@ -837,6 +852,7 @@ def annotate_workbook(
     strict: bool = False,
     require_evidence: bool | None = None,
     duplicate_threshold: int = 3,
+    require_execution_contract: bool | None = None,
     append_summary: bool = True,
     evidence_width: int = 150,
 ) -> dict[str, Any]:
@@ -847,7 +863,9 @@ def annotate_workbook(
     ``case_id_column``/``case_name_column``，列参数可用列号、Excel 字母或表头文字。
     ``strict=True`` 时，回填前会执行结果质量门：步骤必须带有
     ``step_id``、``row/source_row``、``status``、``actual``，且不能使用通用
-    操作占位句；默认还要求每个步骤/单条结果至少有一项 evidence。只要
+    操作占位句；默认还要求每个步骤/单条结果至少有一项 evidence。严格模式
+    同时要求结果包含全局 execution_manifest，并且每条已执行用例带有真实
+    action_trace、观察结果和独立证据。只要
     存在质量问题或未匹配结果，就抛出 :class:`AnnotationError`，不会保存
     输出文件。歧义定位无论 strict 与否都会抛错。
     """
@@ -863,12 +881,15 @@ def annotate_workbook(
     output_path = Path(out).expanduser().resolve() if out else source_path.with_name(f"{source_path.stem}_AI自测结果{source_path.suffix}")
     if output_path == source_path:
         raise AnnotationError("输出文件不能覆盖源用例文件，请指定不同的 --out 路径")
+    if require_execution_contract is None:
+        require_execution_contract = strict
     if isinstance(results, Mapping):
         result_records = normalize_results(
             results,
             strict=strict,
             require_evidence=require_evidence,
             duplicate_threshold=duplicate_threshold,
+            require_execution_contract=require_execution_contract,
         )
     else:
         result_records = normalize_results(
@@ -876,6 +897,7 @@ def annotate_workbook(
             strict=strict,
             require_evidence=require_evidence,
             duplicate_threshold=duplicate_threshold,
+            require_execution_contract=require_execution_contract,
         )
     result_root = Path(result_dir).expanduser().resolve() if result_dir else None
     evidence_root_path = Path(evidence_root).expanduser().resolve() if evidence_root else None

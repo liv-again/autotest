@@ -18,6 +18,7 @@ class ResultQualityError(ValueError):
 
 
 _GENERIC_ACTUAL_PATTERNS = (
+    re.compile(r"^Excel行\s*\d+\s*已执行[：:][\s\S]*$", re.IGNORECASE),
     re.compile(r"^已在.+(?:执行|完成).*(?:截图|证据|留痕|保留).*$", re.IGNORECASE),
     re.compile(r"^(?:已执行|执行完成|已完成).*(?:操作|点击|搜索|滑动|导航|用例).*$", re.IGNORECASE),
     re.compile(r"^当前页面已完成(?:若干|相关|必要)?(?:导航|操作|动作|滑动).*$", re.IGNORECASE),
@@ -117,6 +118,8 @@ def status_bucket(status: Any) -> str:
         return "pending"
     if "跳过" in normalized or "⏭" in normalized or normalized.startswith("☑"):
         return "skip"
+    if "未执行" in normalized or "未测" in normalized or "未完成" in normalized:
+        return "not_executed"
     if "通过" in normalized or "成功" in normalized or "✅" in normalized or "🟢" in normalized:
         return "pass"
     return "other"
@@ -152,7 +155,7 @@ def actual_issue(actual: Any, *, action: Any = "", expected: Any = "") -> str | 
         return "actual 是通用占位句，不是页面观察或断言事实"
     for pattern in _GENERIC_ACTUAL_PATTERNS:
         if pattern.match(text):
-            return "actual 描述了执行操作/保留截图，未描述当前步骤的页面观察"
+            return "actual 包含执行器操作回显，必须只记录执行后的页面观察或断言事实"
 
     action_text = _text(action)
     if action_text and compact == _compact(action_text):
@@ -238,7 +241,12 @@ def validate_result_records(
             actual = _text(record.get("actual"))
             if actual:
                 actuals[_compact(actual)].append(
-                    (identity, "", "", "")
+                    (
+                        identity,
+                        "",
+                        _compact(record.get("action")),
+                        _compact(record.get("expected")),
+                    )
                 )
 
     if duplicate_threshold < 2:

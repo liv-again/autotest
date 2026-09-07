@@ -5,6 +5,9 @@
   "required": ["cases"],
   "properties": {
     "schema_version": {"type": "string"},
+    "execution_mode": {"enum": ["full", "sample", "intermediate"]},
+    "execution_manifest": {"$ref": "#/$defs/executionManifest"},
+    "setup_trace": {"type": "array"},
     "cases": {
       "type": "array",
       "items": {"$ref": "#/$defs/case"}
@@ -29,6 +32,26 @@
         ]
       }
     },
+    "trace": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "minProperties": 1
+      }
+    },
+    "executionManifest": {
+      "type": "object",
+      "required": ["expected_count"],
+      "properties": {
+        "mode": {"enum": ["full", "sample"]},
+        "expected_count": {"type": "integer", "minimum": 0},
+        "selected_cases": {"type": "array"},
+        "selected": {"type": "array"},
+        "selected_case_refs": {"type": "array"},
+        "selected_case_ids": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
     "step": {
       "type": "object",
       "required": ["step_id", "step_index", "status", "actual"],
@@ -39,6 +62,13 @@
         "source_row": {"type": "integer", "minimum": 1},
         "action": {"type": "string"},
         "expected": {"type": "string"},
+        "observation": {"type": "string"},
+        "action_trace": {"$ref": "#/$defs/trace"},
+        "execution_trace": {"$ref": "#/$defs/trace"},
+        "attempt_trace": {"$ref": "#/$defs/trace"},
+        "blocked_reason": {"type": "string"},
+        "blocker": {"type": "string"},
+        "reason": {"type": "string"},
         "status": {"type": "string", "minLength": 1},
         "actual": {"type": "string"},
         "depends_on": {
@@ -67,6 +97,15 @@
         "source_order": {"type": "integer", "minimum": 1},
         "execution_order": {"type": "integer", "minimum": 1},
         "status": {"type": "string", "minLength": 1},
+        "observation": {"type": "string"},
+        "action_trace": {"$ref": "#/$defs/trace"},
+        "execution_trace": {"$ref": "#/$defs/trace"},
+        "attempt_trace": {"$ref": "#/$defs/trace"},
+        "blocked_reason": {"type": "string"},
+        "blocker": {"type": "string"},
+        "skip_reason": {"type": "string"},
+        "not_executed_reason": {"type": "string"},
+        "reason": {"type": "string"},
         "actual": {"type": "string"},
         "steps": {
           "type": "array",

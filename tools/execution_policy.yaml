@@ -1,0 +1,53 @@
+# Global execution policy. This file is shared by every app, sheet and module.
+# Planning may be module-scoped, but execution and evidence remain row-scoped.
+require_manifest: true
+fail_on_incomplete: true
+require_action_trace: true
+require_observation: true
+require_evidence: true
+require_unique_case_evidence: true
+allow_page_batching: false
+allow_explicit_skip: true
+planning_scope: module
+execution_scope: case
+exception_review_scope: module
+require_per_row_execution: true
+require_source_order: true
+require_execution_order: true
+persist_after_each_case: true
+reset_state_before_each_case: true
+reset_orientation_before_each_case: true
+fail_on_unrecognized_action: true
+allow_observe_only_as_pass: false
+max_action_retries: 1
+allow_infinite_retest: false
+
+# These settings are consumed by every mobile/UI runner.  App-specific page
+# predicates may add stronger evidence, but must not weaken these defaults.
+page_gate:
+  enabled: true
+  fail_closed: true
+  require_post_navigation_recheck: true
+  max_navigation_attempts: 1
+  page_ready_retries: 5
+  max_action_retries: 1
+
+state_reset:
+  max_soft_back: 3
+
+entry_navigation:
+  search_current_viewport_first: true
+  restore_top_before_second_search: true
+  search_lower_section_last: true
+  max_directional_passes: 2
+  recheck_page_after_entry_tap: true
+  restore_source_page_between_multiple_entries: true
+
+result_quality:
+  actual_source: post_action_observation
+  reject_action_echo: true
+  require_action_trace: true
+  require_observation: true
+  require_independent_evidence: true
+  duplicate_actual_threshold: 3
+  allow_contextual_repeat_when_action_or_expected_present: true

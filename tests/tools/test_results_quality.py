@@ -70,6 +70,21 @@ def test_strict_rejects_action_echo_with_page_labels(tmp_path):
     assert not output.exists()
 
 
+def test_strict_rejects_ui_tree_only_actual(tmp_path):
+    source = tmp_path / "cases.xlsx"
+    output = tmp_path / "out.xlsx"
+    _make_workbook(source)
+
+    with pytest.raises(AnnotationError, match="UI 树"):
+        annotate_workbook(
+            source,
+            [_strict_case(actual="当前页面观察：action_bar_root、content、hx_page_view")],
+            output,
+            strict=True,
+        )
+    assert not output.exists()
+
+
 def test_strict_preserves_not_applicable_status_and_inherits_case_evidence(tmp_path):
     source = tmp_path / "cases.xlsx"
     output = tmp_path / "out.xlsx"

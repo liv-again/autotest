@@ -28,7 +28,9 @@ DEFAULT_EXECUTION_POLICY: dict[str, Any] = {
     "require_observation": True,
     "require_evidence": True,
     "require_unique_case_evidence": True,
-    "allow_page_batching": False,
+    # True permits page-group navigation reuse only; the gate still requires
+    # one action trace, observation and evidence record per Excel row.
+    "allow_page_batching": True,
     "allow_explicit_skip": True,
 }
 
@@ -229,6 +231,7 @@ def validate_execution_contract(
     # result documents: it requires both Excel identity and deterministic
     # source/execution order for every row.
     row_scoped_manifest = isinstance(manifest, Mapping) and _text(manifest.get("execution_scope")) == "single_excel_row"
+    llm_review_required = bool(isinstance(manifest, Mapping) and manifest.get("llm_review_required"))
 
     record_keys: list[set[str]] = []
     seen_records: set[str] = set()
@@ -264,6 +267,8 @@ def validate_execution_contract(
                 errors.append(f"{identity}: 缺少执行后的 observation/actual")
             if settings.get("require_evidence", True) and not evidence:
                 errors.append(f"{identity}: 缺少用例级 evidence")
+            if llm_review_required and not isinstance(record.get("llm_review"), Mapping):
+                errors.append(f"{identity}: 该执行计划要求逐行 LLM 复核，缺少 llm_review")
         elif bucket == "blocked":
             if not _reason(record):
                 errors.append(f"{identity}: 阻塞结果必须填写 blocked_reason/blocker/reason")

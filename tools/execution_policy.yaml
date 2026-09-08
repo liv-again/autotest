@@ -6,9 +6,11 @@ require_action_trace: true
 require_observation: true
 require_evidence: true
 require_unique_case_evidence: true
-allow_page_batching: false
+# Page batching means navigation-context reuse only.  Business actions,
+# assertions, screenshots and journal records remain row-scoped.
+allow_page_batching: true
 allow_explicit_skip: true
-planning_scope: module
+planning_scope: module_page_group
 execution_scope: case
 exception_review_scope: module
 require_per_row_execution: true
@@ -21,6 +23,42 @@ fail_on_unrecognized_action: true
 allow_observe_only_as_pass: false
 max_action_retries: 1
 allow_infinite_retest: false
+page_grouping:
+  enabled: true
+  key_fields: [sheet, level_1, level_2, level_3, level_4, entry]
+  contiguous_only: true
+  allow_cross_context_merge: false
+  reuse_navigation_within_group: true
+  require_row_level_evidence: true
+  max_runtime_replans: 1
+
+llm_execution:
+  planning_scope: module_page_group
+  execution_context: page_group
+  action_scope: single_excel_row
+  result_review_scope: single_excel_row
+  exception_replan_scope: single_excel_row
+  profile_feedback_scope: run
+  require_screenshot_and_action_trace: true
+  hard_gate_cannot_be_overridden: true
+  queue_artifact: llm_review_queue.json
+  verdict_merge_tool: tools/llm_review_results.py
+  review_contract: tools/LLM_REVIEW_CONTRACT.md
+  allowed_agents: [Codex, OpenCode]
+  require_run_binding: true
+  require_queue_binding: true
+  require_execution_digest: true
+  require_evidence_sha256: true
+  require_agent_model: true
+  require_prompt_version: true
+
+profile_feedback:
+  enabled: true
+  direct_profile_write: false
+  require_evidence: true
+  require_app_version: true
+  require_schema_and_lint_before_promotion: true
+  auto_promote_single_observation: false
 
 # These settings are consumed by every mobile/UI runner.  App-specific page
 # predicates may add stronger evidence, but must not weaken these defaults.

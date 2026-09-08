@@ -153,6 +153,8 @@ def actual_issue(actual: Any, *, action: Any = "", expected: Any = "") -> str | 
     compact = _compact(text)
     if compact in {_compact(item) for item in _GENERIC_EXACT}:
         return "actual 是通用占位句，不是页面观察或断言事实"
+    if text.startswith("当前页面观察：") and "操作结果：" not in text:
+        return "actual 不能只保留 UI 树摘要，必须同时记录真实执行步骤和截图可见结果"
     for pattern in _GENERIC_ACTUAL_PATTERNS:
         if pattern.match(text):
             return "actual 包含执行器操作回显，必须只记录执行后的页面观察或断言事实"

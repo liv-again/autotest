@@ -28,13 +28,35 @@ def test_module_plan_reads_once_and_keeps_row_order(tmp_path):
 
     plan = build_module_plan(source, ["模块A", "模块B"])
 
-    assert plan["planning_scope"] == "module"
+    assert plan["planning_scope"] == "module_page_group"
     assert plan["execution_scope"] == "single_excel_row"
-    assert plan["page_batching_allowed"] is False
+    assert plan["page_batching_allowed"] is True
     assert plan["expected_count"] == 3
     assert [case["row"] for case in plan["modules"][0]["cases"]] == [2, 3]
     assert plan["modules"][0]["cases"][0]["action"] == "点击模块"
     assert plan["execution_manifest"]["selected_cases"][2]["source_order"] == 3
+
+
+def test_page_groups_include_hierarchy_and_do_not_merge_same_page_name(tmp_path):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "行情"
+    sheet.append(["一级目录", "二级目录", "三级目录", "用例名称", "入口", "操作描述", "预期结果"])
+    sheet.append(["行情", "沪深京", "沪深A股", "沪深详情-1", "沪深A股", "点击第一条", "显示详情"])
+    sheet.append([None, None, None, "沪深详情-2", "沪深A股", "横屏", "横屏详情"])
+    sheet.append(["行情", "港股", "港股", "港股详情-1", "港股", "点击第一条", "显示详情"])
+    source = tmp_path / "context.xlsx"
+    workbook.save(source)
+
+    plan = build_module_plan(source, ["行情"])
+    cases = plan["modules"][0]["cases"]
+
+    assert cases[0]["navigation_context"]["level_3"] == "沪深A股"
+    assert cases[1]["navigation_context"]["level_3"] == "沪深A股"
+    assert cases[0]["page_group_id"] == cases[1]["page_group_id"]
+    assert cases[1]["page_group_id"] != cases[2]["page_group_id"]
+    assert cases[2]["navigation_context"]["level_2"] == "港股"
+    assert plan["modules"][0]["page_group_count"] == 2
 
 
 def test_summarize_records_page_observation_without_action_echo():
@@ -42,6 +64,24 @@ def test_summarize_records_page_observation_without_action_echo():
 
     assert actual == "当前页面观察：query_page、结果列表"
     assert "点击查询" not in actual
+
+
+def test_build_actual_uses_trace_steps_and_screenshot_visible_text():
+    actual = runner.build_actual(
+        [
+            {"type": "tap", "target": "顶部港股", "result": "success"},
+            {"type": "evidence", "target": "shot.png", "result": "success"},
+        ],
+        [{"text": "港股"}, {"text": "AH股"}, {"id": "action_bar_root"}],
+        setup_ok=True,
+        action_ok=True,
+    )
+
+    assert "AI执行步骤：" in actual
+    assert "点击已识别控件“顶部港股”" in actual
+    assert "截图可见文字/标题：港股、AH股" in actual
+    assert "action_bar_root" not in actual
+    assert "行情界面，点击“港股”tab页" not in actual
 
 
 def test_row_target_contract_rejects_detail_and_accepts_a_share_list(monkeypatch):
@@ -112,7 +152,7 @@ def test_enter_market_home_prefers_top_tab_over_same_text_title(monkeypatch):
 def test_target_page_guard_rechecks_after_navigation(monkeypatch):
     calls = []
     wrong_page = [{"id": "page_queue_nav_bar"}]
-    target_page = [{"id": "table"}, {"text": "上证A股"}]
+    target_page = [{"id": "table"}, {"text": "返回"}, {"text": "上证A股"}]
     monkeypatch.setattr(runner, "screen_elements", lambda: wrong_page)
 
     def navigate(events):
@@ -134,6 +174,84 @@ def test_target_page_guard_rechecks_after_navigation(monkeypatch):
     assert runner.ensure_target_page(events, contract)
     assert calls == ["navigate", "recheck"]
     assert [item["result"] for item in events if item["type"] == "assert"] == ["failed", "success"]
+
+
+def test_retest_queue_resolves_only_requested_rows(tmp_path):
+    queue_path = tmp_path / "retest_queue.json"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "retest_id": "模块A!3",
+                        "retest_order": 1,
+                        "sheet": "模块A",
+                        "row": 3,
+                        "case_id": "模块A-row-003",
+                        "initial_status": "🟡待验证",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    entries = runner._load_retest_queue(queue_path)
+    plan = {
+        "modules": [
+            {
+                "sheet": "模块A",
+                "page_groups": [
+                    {
+                        "page_group_id": "模块A-page-group-001",
+                        "page_group_key": "模块A|行情",
+                        "cases": [
+                            {
+                                "sheet": "模块A",
+                                "row": 2,
+                                "case_id": "模块A-row-002",
+                                "source_order": 1,
+                            },
+                            {
+                                "sheet": "模块A",
+                                "row": 3,
+                                "case_id": "模块A-row-003",
+                                "source_order": 2,
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+    items = runner._retest_execution_items(plan, entries)
+
+    assert [item[2]["row"] for item in items] == [3]
+    assert items[0][1]["page_group_id"] == "模块A-page-group-001"
+
+
+def test_retest_queue_rejects_duplicate_rows(tmp_path):
+    queue_path = tmp_path / "duplicate_queue.json"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {"sheet": "模块A", "row": 3, "case_id": "模块A-row-003"},
+                    {"sheet": "模块A", "row": 3, "case_id": "模块A-row-003"},
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    try:
+        runner._load_retest_queue(queue_path)
+    except ValueError as exc:
+        assert "重复用例" in str(exc)
+    else:
+        raise AssertionError("duplicate retest row should be rejected")
 
 
 def test_detail_case_name_is_used_only_when_action_needs_detail():
@@ -273,6 +391,27 @@ def test_module_session_cold_starts_once_then_soft_resets(monkeypatch):
     assert session.cold_start_count == 1
     assert session.soft_reset_count == 1
     assert session.recovery_restart_count == 0
+
+
+def test_page_group_reuses_navigation_without_module_reset(monkeypatch):
+    calls = {"rotate": 0, "module": 0}
+
+    monkeypatch.setattr(runner, "rotate", lambda events, landscape: calls.__setitem__("rotate", calls["rotate"] + 1) or True)
+    def fake_module_state(events, sheet, session):
+        calls["module"] += 1
+        session.active_sheet = sheet
+        return True
+
+    monkeypatch.setattr(runner, "ensure_module_state", fake_module_state)
+
+    session = runner.ModuleSession()
+    first = runner.ensure_page_group_state([], "港股", "g1", "港股|行情|港股", session)
+    second = runner.ensure_page_group_state([], "港股", "g1", "港股|行情|港股", session)
+
+    assert first and second
+    assert calls["module"] == 1
+    assert calls["rotate"] == 1
+    assert session.page_group_reuse_count == 1
 
 
 def test_module_session_uses_one_bounded_cold_start_when_soft_reset_fails(monkeypatch):

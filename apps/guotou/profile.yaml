@@ -3,21 +3,21 @@ app_version: 10.5.4
 entries:
 - key: quote.guzhi_list
   path: 行情→股指→国内指数→更多；列表字段：最新/涨幅/涨跌；搜索与详情可达
-  last_verified: '2026-08-27'
+  last_verified: '2026-09-08'
   app_version: V10.5.4
-  evidence_run: outputs/2026-08-27-guotou-full
+  evidence_run: output/2026-09-08-guotou-six-sheets
   status: verified
 - key: quote.hsj_stock_list
   path: 行情→沪深京；指数宫格/涨跌分布/涨幅榜/更多
-  last_verified: '2026-08-27'
+  last_verified: '2026-09-08'
   app_version: V10.5.4
-  evidence_run: outputs/2026-08-27-guotou-full
+  evidence_run: output/2026-09-08-guotou-six-sheets
   status: verified
 - key: quote.sector_main
   path: 行情→板块；概念主力净流入与行业主力净流入通过左右滑动切换；行业板块/概念板块
-  last_verified: '2026-09-01'
+  last_verified: '2026-09-08'
   app_version: V10.5.4
-  evidence_run: user-confirmed/2026-09-01
+  evidence_run: output/2026-09-08-guotou-six-sheets
   status: verified
 - key: quote.hk_main
   path: 行情→港股；顶部恒生指数/国企指数/沪、深港通；下方行业板块、AH股、港股主板、港股创业板分组；页面支持滚动，分组标签可收起
@@ -27,9 +27,9 @@ entries:
   status: verified
 - key: quote.other_main
   path: 行情→其他；基金/个股/债券→上证A股列表
-  last_verified: '2026-08-27'
+  last_verified: '2026-09-08'
   app_version: V10.5.4
-  evidence_run: outputs/2026-08-27-guotou-full
+  evidence_run: output/2026-09-08-guotou-six-sheets
   status: verified
 - key: quote.stock_detail
   path: 行情列表→任一股票；分时/五档/明细/新闻/盘口/公告/简况/财务
@@ -51,27 +51,27 @@ entries:
   status: verified
 - key: quote.sector_lists
   path: 行情→板块→行业板块更多→板块列表；顶部可切换全部板块/行业板块/概念板块/地域板块；右上角搜索；表头涨幅/领涨股/涨速可交互
-  last_verified: '2026-08-27'
+  last_verified: '2026-09-08'
   app_version: V10.5.4
-  evidence_run: outputs/2026-08-27-guotou-full/shots-r3
+  evidence_run: output/2026-09-08-guotou-six-sheets
   status: verified
 - key: quote.other_market_lists
   path: 行情→其他；全球市场→国内期货/外汇/港股；基金→沪深封闭/上证封闭/深证封闭/±20%基金；个股→上证A/B/深证A/B/北证A/创业板/科创板/三板/风险警示/退市整理；债券→通用回购逆回购/沪深债券/上证债券/深证债券
-  last_verified: '2026-08-27'
+  last_verified: '2026-09-08'
   app_version: V10.5.4
-  evidence_run: outputs/2026-08-27-guotou-full/shots-r3
+  evidence_run: output/2026-09-08-guotou-six-sheets
   status: verified
 - key: quote.hk_ah_list
   path: 行情→港股→AH股更多→AH股比价列表；本轮观察到页面内溢价率说明文案和关闭图标，未观察到预期模态“我知道了”；支持股票详情、搜索、列表滚动和涨幅排序；点击刷新后等待5秒未确认数据变化
-  last_verified: '2026-09-07'
+  last_verified: '2026-09-08'
   app_version: V10.5.4
-  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+  evidence_run: output/2026-09-08-guotou-six-sheets
   status: unverified
 - key: quote.index_extended
   path: 行情→股指；国内指数/股指期货/其他指数均可从模块更多进入列表；股指期货说明图标进入介绍页；列表支持搜索、详情和横竖屏
-  last_verified: '2026-08-27'
+  last_verified: '2026-09-08'
   app_version: V10.5.4
-  evidence_run: outputs/2026-08-27-guotou-full/shots-r3
+  evidence_run: output/2026-09-08-guotou-six-sheets
   status: verified
 - key: quote.hsj_rankings
   path: 行情→沪深京→涨幅榜左侧展开；可见涨幅榜/跌幅榜/快速涨幅/换手率/量比/成交额；各模块更多进入列表，支持搜索、排序、详情和横竖屏
@@ -93,9 +93,9 @@ entries:
   status: verified
 - key: quote.fund_flow_extended
   path: 行情→看资金；顶部切换自选/沪深京/行业/概念，列表表头可排序；支持横竖屏
-  last_verified: '2026-08-27'
+  last_verified: '2026-09-08'
   app_version: V10.5.4
-  evidence_run: outputs/2026-08-27-guotou-full/shots-r3
+  evidence_run: output/2026-09-08-guotou-six-sheets
   status: verified
 - key: quote.hk_connect_hkgt_sh
   path: 行情→港股→沪、深港通→港股通；港股通(沪)额度及资金流入可见；港股通(沪)列表支持更多进入独立列表、股票详情、滚动和涨幅排序

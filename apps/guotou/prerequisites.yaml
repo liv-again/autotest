@@ -68,3 +68,44 @@ known_codes:
     market: 沪深
     product: ETF
     t0: false
+- code: '688001'
+  name: 华兴源创
+  market: 沪深
+  attributes:
+    market: 科创板
+    product: 股票
+    special_status: 普通
+    t0: false
+- code: '688002'
+  name: 睿创微纳
+  market: 沪深
+  attributes:
+    market: 科创板
+    product: 股票
+    special_status: 普通
+    t0: false
+- code: HK1810
+  name: 小米集团-W
+  market: 港股
+  attributes:
+    market: 港股
+    product: 股票
+    special_status: 普通
+- code: AP2001
+  name: 苹果2001
+  market: 国内期货
+  attributes:
+    market: 国内期货
+    product: 期货
+- code: CF2609
+  name: 棉花2609
+  market: 国内期货
+  attributes:
+    market: 国内期货
+    product: 期货
+- code: AUDCAD
+  name: 澳元/加元
+  market: 外汇
+  attributes:
+    market: 外汇
+    product: 外汇

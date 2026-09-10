@@ -20,10 +20,10 @@ entries:
   evidence_run: output/2026-09-08-guotou-six-sheets
   status: verified
 - key: quote.hk_main
-  path: 行情→港股；顶部恒生指数/国企指数/沪、深港通；下方行业板块、AH股、港股主板、港股创业板分组；页面支持滚动，分组标签可收起
-  last_verified: '2026-09-07'
+  path: 行情→港股；顶部恒生指数/国企指数/沪、深港通；下方行业板块、AH股、港股主板、港股创业板分组；页面支持滚动，分组列表名称可点击展开/收起
+  last_verified: '2026-09-10'
   app_version: V10.5.4
-  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+  evidence_run: output/2026-09-10-guotou-quote-regression/数据补充.md
   status: verified
 - key: quote.other_main
   path: 行情→其他；基金/个股/债券→上证A股列表
@@ -36,6 +36,12 @@ entries:
   last_verified: '2026-08-27'
   app_version: V10.5.4
   evidence_run: outputs/2026-08-27-guotou-full
+  status: verified
+- key: quote.watchlist
+  path: 底部导航栏→自选；右上角搜索进入搜索页；搜索任意代码后点击结果右侧圆圈加号加入自选；自选列表长按记录可选择置顶/置底/删除；左上角“沪”指数区可展开三大指数分时，点击右侧指数名称切换，点击空白处收起
+  last_verified: '2026-09-10'
+  app_version: V10.5.4
+  evidence_run: output/2026-09-10-guotou-quote-regression/数据补充.md
   status: verified
 - key: quote.fund_flow
   path: 行情→沪深京→看资金；自选/沪深京/行业/概念
@@ -61,6 +67,12 @@ entries:
   app_version: V10.5.4
   evidence_run: output/2026-09-08-guotou-six-sheets
   status: verified
+- key: quote.other_instrument_detail
+  path: 行情→其他→全球市场→国内期货/外汇→选择标的进入详情；测试标的已补充为AP2001、CF2609、AUDCAD，但详情页面路径待运行确认
+  last_verified: '2026-09-10'
+  app_version: V10.5.4
+  evidence_run: output/2026-09-10-guotou-quote-regression/数据补充.md
+  status: unverified
 - key: quote.hk_ah_list
   path: 行情→港股→AH股更多→AH股比价列表；本轮观察到页面内溢价率说明文案和关闭图标，未观察到预期模态“我知道了”；支持股票详情、搜索、列表滚动和涨幅排序；点击刷新后等待5秒未确认数据变化
   last_verified: '2026-09-08'
@@ -110,17 +122,17 @@ entries:
   evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
   status: verified
 - key: quote.hk_board_growth
-  path: 行情→港股→港股创业板展开→更多；独立列表显示最新/涨幅/总市值，支持滚动和涨幅排序；列表股票可进入详情，但本轮新达控股详情未见一档买卖盘
-  last_verified: '2026-09-07'
+  path: 行情→港股→港股创业板展开→更多；独立列表显示最新/涨幅/总市值，支持滚动和涨幅排序；列表股票可进入详情，港股创业板详情不提供一档买卖盘
+  last_verified: '2026-09-10'
   app_version: V10.5.4
-  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
-  status: unverified
+  evidence_run: output/2026-09-10-guotou-quote-regression/数据补充.md
+  status: verified
 - key: quote.hk_stock_detail
-  path: 行情→港股通(沪)/AH股/港股主板列表→股票详情；可见代码、分时、新闻/盘口/公告/简况/财务页签及底部恒生指数；不同港股标的的盘口展示存在差异
-  last_verified: '2026-09-07'
+  path: 行情→港股通(沪)/AH股/港股主板/港股创业板列表→股票详情；可见代码、分时、新闻/盘口/公告/简况/财务页签及底部恒生指数；港股标的盘口展示一致，港股创业板详情同样不提供一档买卖盘
+  last_verified: '2026-09-10'
   app_version: V10.5.4
-  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
-  status: unverified
+  evidence_run: output/2026-09-10-guotou-quote-regression/数据补充.md
+  status: verified
 - key: quote.hk_connect_hkgt_sz
   path: 行情→港股→沪、深港通→下滑港股通(沪)列表暴露港股通(深)→点击港股通(深)右侧更多→港股通(深)独立列表
   last_verified: '2026-09-07'
@@ -143,12 +155,12 @@ capabilities:
   evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
   status: verified
 - key: cap.quote.hk_group_toggle
-  supported: false
-  note: AH股、港股主板、港股创业板标签的收起状态可观察；行业板块标签点击后未加载子行，且一次点击实际进入行业板块更多页，四分组完整展开/收起能力未确认。
-  last_verified: '2026-09-07'
+  supported: true
+  note: 港股分组展开/收起通过点击分组列表名称完成；执行时以分组名称的展开状态变化为断言，不把“更多”按钮当作展开控件。
+  last_verified: '2026-09-10'
   app_version: V10.5.4
-  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
-  status: unverified
+  evidence_run: output/2026-09-10-guotou-quote-regression/数据补充.md
+  status: verified
 - key: cap.quote.hk_color_coding
   supported: true
   note: 港股主界面截图中上涨值显示红色、下跌值显示绿色、平盘值显示黑色；恒生指数和国企指数下跌值为绿色。
@@ -157,12 +169,33 @@ capabilities:
   evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
   status: verified
 - key: cap.quote.hk_stock_detail_variants
-  supported: false
-  note: 港股通(沪)、AH股和港股主板详情页可见分时及新闻/盘口/公告/简况/财务页签；港股创业板新达控股详情页未见预期一档买卖盘，因此不同标的详情展示未完全满足统一盘口能力。
-  last_verified: '2026-09-07'
+  supported: true
+  note: 港股标的详情的盘口展示规则一致；港股创业板详情同样不存在一档买卖盘，不能把该缺失判定为功能失败。
+  last_verified: '2026-09-10'
   app_version: V10.5.4
-  evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
-  status: unverified
+  evidence_run: output/2026-09-10-guotou-quote-regression/数据补充.md
+  status: verified
+- key: cap.quote.watchlist
+  supported: true
+  note: 自选入口、搜索加自选、长按置顶/置底/删除和左上角“沪”三大指数展开/切换/收起链路已补充。
+  last_verified: '2026-09-10'
+  app_version: V10.5.4
+  evidence_run: output/2026-09-10-guotou-quote-regression/数据补充.md
+  status: verified
+- key: cap.quote.watchlist_groups
+  supported: false
+  note: 国投暂不支持自选分组和动态分组。
+  last_verified: '2026-09-10'
+  app_version: V10.5.4
+  evidence_run: output/2026-09-10-guotou-quote-regression/数据补充.md
+  status: verified
+- key: cap.quote.us_market
+  supported: false
+  note: 国投不支持美股；不得为美股详情用例猜测市场入口或标的代码。
+  last_verified: '2026-09-10'
+  app_version: V10.5.4
+  evidence_run: output/2026-09-10-guotou-quote-regression/数据补充.md
+  status: verified
 verified_chains:
 - key: chain.hk_hkgt_sh_list_ops
   steps:
@@ -196,4 +229,16 @@ verified_chains:
   - 港股主板股票详情
   last_verified: '2026-09-07'
   evidence_run: output/2026-09-07-guotou-hk-llm-closed-loop
+  status: verified
+- key: chain.watchlist_ops
+  steps:
+  - 底部导航栏→自选
+  - 右上角搜索进入搜索页
+  - 搜索任意代码→点击结果右侧圆圈加号
+  - 自选列表长按记录→置顶/置底/删除
+  - 点击左上角“沪”指数区→展开三大指数分时
+  - 点击右侧指数名称→切换指数
+  - 点击空白处→收起三大指数分时
+  last_verified: '2026-09-10'
+  evidence_run: output/2026-09-10-guotou-quote-regression/数据补充.md
   status: verified

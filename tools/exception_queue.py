@@ -46,6 +46,7 @@ def build_exception_queue(document: dict[str, Any] | list[Any]) -> dict[str, Any
                 "actual": record.get("actual") or record.get("observation"),
                 "blocked_reason": record.get("blocked_reason") or record.get("reason"),
                 "evidence": record.get("evidence") or record.get("evidence_paths") or [],
+                "runtime_recovery": record.get("runtime_recovery") or {},
             }
         )
     return {

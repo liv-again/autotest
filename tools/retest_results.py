@@ -88,6 +88,7 @@ def _normalize(
             document,
         strict=strict,
         require_evidence=require_evidence if strict else None,
+        require_judgment_reason=strict,
         duplicate_threshold=duplicate_threshold,
         # The retest plan is checked separately for selected-case
         # completeness; merge_retests applies the shared action/evidence gate
@@ -304,6 +305,15 @@ def merge_retests(
             continue
         retest = retest_by_key[key]
         final_record = copy.deepcopy(retest)
+        # The visible final document keeps the original full-run ordering.
+        # Retest execution_order is local to the exception queue and would
+        # otherwise create duplicate/gapped orders when mixed with the 45
+        # cases that were not retested.  The complete retest order remains in
+        # the second attempt snapshot below.
+        if initial.get("execution_order") not in (None, ""):
+            final_record["execution_order"] = initial.get("execution_order")
+        elif initial.get("source_order") not in (None, ""):
+            final_record["execution_order"] = initial.get("source_order")
         final_record["attempts"] = [
             _attempt_snapshot(initial, attempt=1, phase="batch"),
             _attempt_snapshot(retest, attempt=2, phase="single_case_retest"),

@@ -11,3 +11,24 @@ test_accounts: []
 environment: env.yaml
 profile: profile.yaml
 prerequisites: prerequisites.yaml
+
+# Zhongyuan exposes the quote pages through the shared market container.  These
+# contracts are app configuration, not executor logic, and allow the generic
+# adapter to soft-reset within a module instead of relaunching the app.
+module_roots:
+  股指:
+    all_ids:
+    - page_queue_nav_bar
+    - hxui_tool_bar
+    - gz_index_container
+    any_text:
+    - 全球
+    - 股指
+  沪深京:
+    all_ids:
+    - page_queue_nav_bar
+    - hxui_tool_bar
+    - hstab
+    - gz_index_container
+    any_text:
+    - 沪深京

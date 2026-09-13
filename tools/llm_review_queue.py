@@ -1,9 +1,10 @@
 """Build the row-level evidence queue consumed by the LLM reviewer.
 
-The mobile executor remains deterministic.  This module makes the LLM part
-explicit instead of pretending that a button tap or a screenshot file is a
-semantic pass result.  The reviewer receives one compact item per Excel row
-and returns verdicts that can be merged by ``llm_review_results.py``.
+The low-level mobile driver remains deterministic, but its normal input is a
+structured action plan authored by the selected Agent.  This module makes the semantic LLM
+review explicit instead of pretending that a button tap or a screenshot file
+is a pass result.  The reviewer receives one compact item per Excel row and
+returns verdicts that can be merged by ``llm_review_results.py``.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from tools.llm_review_contract import (
     queue_sha256,
     sha256_bytes,
 )
+from tools.agent_binding import reviewer_default_from_document
 
 
 def _text(value: Any) -> str:
@@ -64,10 +66,13 @@ def build_review_queue(
                 "case_name": record.get("case_name"),
                 "action": record.get("action"),
                 "expected": record.get("expected"),
+                "planning_mode": record.get("planning_mode"),
+                "action_plan_case": record.get("action_plan_case") or {},
                 "executor_status": record.get("status"),
                 "actual": record.get("actual") or record.get("observation"),
                 "page_observation": record.get("page_observation"),
                 "action_trace": record.get("action_trace") or [],
+                "runtime_recovery": record.get("runtime_recovery") or {},
                 "evidence": [
                     str(path).replace("\\", "/")
                     for path in (record.get("evidence") or record.get("evidence_paths") or [])
@@ -76,25 +81,38 @@ def build_review_queue(
             }
         )
     evidence_items = evidence_manifest(records, root)
+    reviewer_default = reviewer_default_from_document(
+        document if isinstance(document, Mapping) else None
+    )
+    execution_manifest = (
+        document.get("execution_manifest")
+        if isinstance(document, Mapping)
+        else None
+    )
+    run_agent_binding = (
+        execution_manifest.get("agent_binding")
+        if isinstance(execution_manifest, Mapping)
+        else None
+    )
     result: dict[str, Any] = {
         "schema_version": CONTRACT_SCHEMA_VERSION,
         "queue_type": "row_llm_execution_review",
         "review_scope": "single_excel_row",
         "run_dir": str(root).replace("\\", "/"),
-        "execution_manifest": (
-            document.get("execution_manifest")
-            if isinstance(document, Mapping)
-            else None
-        ),
+        "execution_manifest": execution_manifest,
+        "agent_binding": run_agent_binding,
+        "review_agent_default": reviewer_default,
         "source_execution_path": (
             str(Path(source_path).expanduser().resolve()).replace("\\", "/")
             if source_path is not None
             else None
         ),
         "llm_instruction": (
-            "逐条读取 expected、navigation_context、action_trace、page_observation 和 evidence 截图。"
+            "逐条读取 expected、navigation_context、action_plan_case、action_trace、runtime_recovery、page_observation 和 evidence 截图。"
             "先判断截图是否为目标页面，再判断动作效果和预期结果。不要根据 executor_status 直接通过，"
-            "也不能用 LLM 结果覆盖确定性页面/动作阻塞。每项必须返回 JSON。"
+            "也不能用 LLM 结果覆盖确定性页面/动作阻塞。每项必须返回 JSON；reason 必须是非空的具体判断理由，"
+            "并会被回填到 AI实测结果的‘判断理由’段落。默认使用 review_agent_default 中的 Agent 和 model；"
+            "若有明确的角色级覆盖，必须在输出 agent 元数据中记录实际使用者。"
         ),
         "verdict_schema": {
             "case_id": "string",
@@ -103,7 +121,7 @@ def build_review_queue(
             "expected_result_match": "true|false|null",
             "confidence": "number 0..1",
             "visible_facts": "string[]",
-            "reason": "string",
+            "reason": "non-empty string; explain why the verdict matches or does not match the evidence",
             "status": "pass|fail|blocked|pending",
         },
         "case_count": len(cases),

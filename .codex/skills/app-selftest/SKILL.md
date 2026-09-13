@@ -24,7 +24,7 @@ description: AI 驱动 Android App 用 Excel 用例做业务自测——用户�
 
 执行前先读取 `references/execution-lessons.md`。其中的页面契约、双向入口搜索、多入口独立复位、冷启动边界和结果质量门是跨 App/Sheet/模块的通用规则；`apps/<app>/test_notes.yaml` 只能补充应用特有的页面身份证据。
 
-- **模块/页面组规划**：每个 Sheet/模块只由 LLM 读取一次 Excel 和相关 App 画像，生成 `module_plan.json`；必须依据一级至四级目录、入口和前置条件生成连续页面组，不能只按目标页面名称合并不同市场或模块。
+- **模块/页面组规划**：`tools/module_planner.py` 只归一化 Excel/profile 事实；每个 Sheet/模块由当前选定的 Agent 读取一次上下文和相关 App 画像，生成 `agent_action_plan.json`，执行时以 `--action-plan` 消费；必须读取 context 中的 `generic_planning_knowledge`，在相关用例中采用其中的横屏、滑动、目标元素查找和排序观察规则；必须依据一级至四级目录、入口和前置条件生成连续页面组，不能只按目标页面名称合并不同市场或模块。
 - **行级执行**：确定性执行器消费规划，按 `source_order` 升序一次只执行一个 Excel 行；每行独立完成目标页确认、本行动作、页面/结果复核、独立 evidence 和结果落盘。页面相同不代表导航上下文相同。
 - **导航复用边界**：同一连续页面组内可以复用导航上下文、resource-id 和已确认的定位策略；每行仍要重新校验目标页，页面被前一行改变时先恢复组锚点。不同组不得合并，`allow_page_batching` 仅表示组内导航复用，不表示合并业务动作。
 - **状态隔离**：每条开始前归一竖屏，清理键盘、弹窗、搜索、排序、详情页和页面栈；横竖屏按目标方向解析，不能用“文本包含横屏”粗略判断。模块内只在首次进入或恢复失败时冷启动，普通行之间复用进程并软复位到模块根页面。
@@ -74,7 +74,7 @@ description: AI 驱动 Android App 用 Excel 用例做业务自测——用户�
 
 `setup`/公共导航动作可以记录在顶层 `setup_trace` 中，但不得写入任何用例的 `actual`。同一 Excel 行包含多个步骤时，步骤结果在该行的 AI 实测结果单元格内按 `S1`、`S2` 换行回填；一个用例跨多行时，每个步骤必须提供对应的 `row/source_row`。没有 `steps` 的旧版单条结果只精确回填指定源行，不再向连续行广播。
 
-结果必须由执行器提供逐步骤的 `action → observation → status` 事实链，`actual` 必须包含真实 `action_trace` 生成的可读步骤和证据截图可见的操作结果；原始 UI 树只能作为 `page_observation` 底层证据，不能单独填入 AI 实测结果，也不能抄写 Excel 操作描述。先完成逐行 LLM 复核，再用结果构建器执行结构和语义质量门；证据不足时由执行器标记 `🟡待数据`/`⛔阻塞` 并说明原因。构建器会拒绝空 `actual`、通用“已执行操作/已保留截图”占位句、仅复述 action 的结果，以及跨不同用例大量复用的相同结果；默认要求每个步骤或单条结果有可追溯 `evidence`。同一用例的 case-level evidence 会在步骤缺少独立证据时显式继承。
+结果必须由执行器提供逐步骤的 `action → observation → status` 事实链，`actual` 必须包含真实 `action_trace` 生成的可读步骤、证据截图可见的操作结果和说明判定通过/不通过/待验证/阻塞原因的判断理由；原始 UI 树只能作为 `page_observation` 底层证据，不能单独填入 AI 实测结果，也不能抄写 Excel 操作描述。先完成逐行 LLM 复核，再用结果构建器执行结构和语义质量门；证据不足时由执行器标记 `🟡待数据`/`⛔阻塞` 并说明原因。构建器会拒绝空 `actual`、通用“已执行操作/已保留截图”占位句、仅复述 action 的结果，以及跨不同用例大量复用的相同结果；默认要求每个步骤或单条结果有可追溯 `evidence`。同一用例的 case-level evidence 会在步骤缺少独立证据时显式继承。
 
 执行记录生成后必须进行逐行 LLM 复核：
 
@@ -93,7 +93,7 @@ LLM 复核必须先判断目标页面，再判断动作效果和预期结果；�
 ```bash
 python tools/retest_results.py plan --results <run>/results.json --scope sheet --scope-name <工作表名> --out <run>/retest_queue.json
 # 逐条消费 queue.cases（只执行队列中的行，不重新跑完整 Sheet）
-python tools/_run_three_sheets.py --source <用例文件.xls> --retest-queue <run>/retest_queue.json --output <run>/retest-run
+python tools/_run_three_sheets.py --source <用例文件.xls> --retest-queue <run>/retest_queue.json --action-plan <run>/agent_action_plan.json --output <run>/retest-run
 # 执行器同时生成 retest_execution.json，直接合并复测结果
 python tools/retest_results.py merge --results <run>/results.json --plan <run>/retest_queue.json --retest-results <run>/retest-run/retest_execution.json --out <run>/results.final.json
 ```

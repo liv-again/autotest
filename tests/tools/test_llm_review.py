@@ -75,6 +75,22 @@ def test_review_queue_is_row_scoped():
     assert queue["queue_binding"]["queue_id"].startswith("queue-")
 
 
+def test_review_queue_exposes_run_agent_default():
+    document = _execution()
+    document["execution_manifest"]["agent_binding"] = {
+        "reviewer": {
+            "agent": "Trae",
+            "model": "model-a",
+            "prompt_version": "row-review-v1",
+        }
+    }
+
+    queue = build_review_queue(document, run_dir="output/run")
+
+    assert queue["review_agent_default"]["agent"] == "Trae"
+    assert queue["review_agent_default"]["model"] == "model-a"
+
+
 def test_llm_cannot_upgrade_deterministic_blocked_case():
     document = _execution("⛔阻塞")
     queue = build_review_queue(document, run_dir="output/run")
@@ -86,6 +102,7 @@ def test_llm_cannot_upgrade_deterministic_blocked_case():
 
     assert result["cases"][0]["status"] == "⛔阻塞"
     assert result["cases"][0]["llm_review"]["status"] == "✅通过"
+    assert "判断理由：判定为⛔阻塞。" in result["cases"][0]["actual"]
 
 
 def test_llm_marks_wrong_page_as_fail():
@@ -103,6 +120,14 @@ def test_llm_marks_wrong_page_as_fail():
 
     assert result["cases"][0]["status"] == "❌不通过"
     assert "港股详情" in result["cases"][0]["blocked_reason"]
+    assert "判断理由：判定为❌不通过。截图页面与港股详情不一致" in result["cases"][0]["actual"]
+
+
+def test_llm_review_rejects_empty_reason():
+    document = _execution()
+    queue = build_review_queue(document, run_dir="output/run")
+    with pytest.raises(LLMReviewError, match="判断理由无效"):
+        merge_reviews(document, _review(queue, reason=""), queue)
 
 
 def test_llm_review_requires_every_case():
@@ -135,16 +160,21 @@ def test_review_rejects_changed_screenshot(tmp_path: Path):
         merge_reviews(document, _review(queue), queue)
 
 
-def test_review_rejects_stale_queue_and_unknown_agent():
+def test_review_rejects_stale_queue_and_requires_agent_name():
     document = _execution()
     queue = build_review_queue(document, run_dir="output/run")
     other_queue = build_review_queue(document, run_dir="output/other-run")
     with pytest.raises(LLMReviewError, match="queue_id"):
         merge_reviews(document, _review(queue), other_queue)
 
+    future_agent = _review(queue)
+    future_agent["agent"] = {"name": "Claude", "model": "x", "prompt_version": "v1"}
+    accepted = merge_reviews(document, future_agent, queue)
+    assert accepted["cases"][0]["llm_review"]["status"] == "✅通过"
+
     invalid = _review(queue)
-    invalid["agent"] = {"name": "OtherAgent", "model": "x", "prompt_version": "v1"}
-    with pytest.raises(LLMReviewError, match="Codex 或 OpenCode"):
+    invalid["agent"] = {"name": "", "model": "x", "prompt_version": "v1"}
+    with pytest.raises(LLMReviewError, match="名称不能为空"):
         merge_reviews(document, invalid, queue)
 
 

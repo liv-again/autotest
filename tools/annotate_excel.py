@@ -286,6 +286,7 @@ def normalize_results(
     *,
     strict: bool = False,
     require_evidence: bool | None = None,
+    require_judgment_reason: bool | None = None,
     duplicate_threshold: int = 3,
     require_execution_contract: bool | None = None,
 ) -> list[dict[str, Any]]:
@@ -368,11 +369,14 @@ def normalize_results(
             require_execution_contract = True
         if require_evidence is None:
             require_evidence = True
+        if require_judgment_reason is None:
+            require_judgment_reason = True
         try:
             ensure_result_quality(
                 normalized,
                 duplicate_threshold=duplicate_threshold,
                 require_evidence=require_evidence,
+                require_judgment_reason=require_judgment_reason,
             )
         except ResultQualityError as exc:
             raise AnnotationError(f"严格模式结果质量校验失败 (strict 模式): {exc}") from exc
@@ -390,6 +394,7 @@ def load_results(
     *,
     strict: bool = False,
     require_evidence: bool | None = None,
+    require_judgment_reason: bool | None = None,
     duplicate_threshold: int = 3,
     require_execution_contract: bool | None = None,
 ) -> list[dict[str, Any]]:
@@ -400,6 +405,7 @@ def load_results(
         _load_result_document(result_path),
         strict=strict,
         require_evidence=require_evidence,
+        require_judgment_reason=require_judgment_reason,
         duplicate_threshold=duplicate_threshold,
         require_execution_contract=require_execution_contract,
     )
@@ -851,6 +857,7 @@ def annotate_workbook(
     generated_at: str | None = None,
     strict: bool = False,
     require_evidence: bool | None = None,
+    require_judgment_reason: bool | None = None,
     duplicate_threshold: int = 3,
     require_execution_contract: bool | None = None,
     append_summary: bool = True,
@@ -863,7 +870,8 @@ def annotate_workbook(
     ``case_id_column``/``case_name_column``，列参数可用列号、Excel 字母或表头文字。
     ``strict=True`` 时，回填前会执行结果质量门：步骤必须带有
     ``step_id``、``row/source_row``、``status``、``actual``，且不能使用通用
-    操作占位句；默认还要求每个步骤/单条结果至少有一项 evidence。严格模式
+    操作占位句；正式结果的 ``actual`` 还必须包含“AI执行步骤”“操作结果”“判断理由”
+    三段。默认还要求每个步骤/单条结果至少有一项 evidence。严格模式
     同时要求结果包含全局 execution_manifest，并且每条已执行用例带有真实
     action_trace、观察结果和独立证据。只要
     存在质量问题或未匹配结果，就抛出 :class:`AnnotationError`，不会保存
@@ -888,6 +896,7 @@ def annotate_workbook(
             results,
             strict=strict,
             require_evidence=require_evidence,
+            require_judgment_reason=require_judgment_reason,
             duplicate_threshold=duplicate_threshold,
             require_execution_contract=require_execution_contract,
         )
@@ -896,6 +905,7 @@ def annotate_workbook(
             list(results),
             strict=strict,
             require_evidence=require_evidence,
+            require_judgment_reason=require_judgment_reason,
             duplicate_threshold=duplicate_threshold,
             require_execution_contract=require_execution_contract,
         )
@@ -1163,6 +1173,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="严格模式下允许没有 evidence（不推荐；默认会阻止保存）",
     )
     parser.add_argument(
+        "--allow-missing-judgment-reason",
+        action="store_true",
+        help="允许 AI实测结果缺少 AI执行步骤/操作结果/判断理由段落（仅用于兼容旧中间结果）",
+    )
+    parser.add_argument(
         "--duplicate-threshold",
         type=int,
         default=3,
@@ -1208,6 +1223,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             generated_at=args.date,
             strict=args.strict,
             require_evidence=False if args.allow_missing_evidence else None,
+            require_judgment_reason=False if args.allow_missing_judgment_reason else None,
             duplicate_threshold=args.duplicate_threshold,
             append_summary=not args.no_summary,
             evidence_width=args.evidence_width,

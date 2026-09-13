@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from tools.results_quality import status_bucket
+from tools.results_quality import actual_contract_issue, judgment_reason_required, status_bucket
 
 
 class ExecutionGateError(ValueError):
@@ -28,6 +28,7 @@ DEFAULT_EXECUTION_POLICY: dict[str, Any] = {
     "require_observation": True,
     "require_evidence": True,
     "require_unique_case_evidence": True,
+    "require_judgment_reason": True,
     # True permits page-group navigation reuse only; the gate still requires
     # one action trace, observation and evidence record per Excel row.
     "allow_page_batching": True,
@@ -231,7 +232,16 @@ def validate_execution_contract(
     # result documents: it requires both Excel identity and deterministic
     # source/execution order for every row.
     row_scoped_manifest = isinstance(manifest, Mapping) and _text(manifest.get("execution_scope")) == "single_excel_row"
+    agent_plan_required = bool(
+        isinstance(manifest, Mapping)
+        and (manifest.get("agent_plan_required") or manifest.get("llm_plan_required"))
+    )
     llm_review_required = bool(isinstance(manifest, Mapping) and manifest.get("llm_review_required"))
+    if agent_plan_required:
+        if _text(manifest.get("planning_mode")) != "agent_structured_action_plan":
+            errors.append("execution_manifest 要求 Agent 动作计划，但 planning_mode 不正确")
+        if not _text(manifest.get("agent_plan_file")):
+            errors.append("execution_manifest 要求 Agent 动作计划，但缺少 agent_plan_file")
 
     record_keys: list[set[str]] = []
     seen_records: set[str] = set()
@@ -251,6 +261,14 @@ def validate_execution_contract(
         trace = _has_trace(record)
         observation = _observation(record)
         evidence = _evidence_values(record)
+        if agent_plan_required and _text(record.get("planning_mode")) != "agent_structured_action_plan":
+            errors.append(f"{identity}: Agent 动作计划运行的结果缺少 planning_mode=agent_structured_action_plan")
+        if agent_plan_required and not isinstance(record.get("action_plan_case"), Mapping):
+            errors.append(f"{identity}: Agent 动作计划运行的结果缺少 action_plan_case")
+        if settings.get("require_judgment_reason", True) and judgment_reason_required(record.get("status")):
+            judgment_issue = actual_contract_issue(observation)
+            if judgment_issue:
+                errors.append(f"{identity}: {judgment_issue}")
         if row_scoped_manifest and settings.get("require_per_row_execution", True):
             if not _text(record.get("sheet")) or record.get("row") in (None, ""):
                 errors.append(f"{identity}: 行级执行结果必须带 sheet + row")

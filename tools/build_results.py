@@ -91,6 +91,7 @@ def build_results(
     setup_trace: Sequence[Mapping[str, Any]] | None = None,
     execution_manifest: Mapping[str, Any] | None = None,
     require_evidence: bool = True,
+    require_judgment_reason: bool = True,
     duplicate_threshold: int = 3,
     require_execution_contract: bool = True,
 ) -> dict[str, Any]:
@@ -99,19 +100,20 @@ def build_results(
     ``normalize_results(..., strict=True)`` performs the required field checks
     and inherits case-level evidence to steps when a step has no own evidence.
     It never creates an ``actual`` value.  The shared semantic quality gate
-    then rejects generic operation placeholders and suspicious cross-case
-    reuse before anything can be written to disk.
+    then rejects generic operation placeholders, missing judgment reasons and
+    suspicious cross-case reuse before anything can be written to disk.
     """
 
     trace = _setup_trace(execution_records, setup_trace)
     try:
         cases = normalize_results(
             execution_records,
-                strict=True,
-                require_evidence=require_evidence,
-                duplicate_threshold=duplicate_threshold,
-                require_execution_contract=False,
-            )
+            strict=True,
+            require_evidence=require_evidence,
+            require_judgment_reason=require_judgment_reason,
+            duplicate_threshold=duplicate_threshold,
+            require_execution_contract=False,
+        )
     except (ValueError, TypeError) as exc:
         raise BuildResultsError(str(exc)) from exc
 
@@ -148,6 +150,7 @@ def write_results(
     setup_trace: Sequence[Mapping[str, Any]] | None = None,
     execution_manifest: Mapping[str, Any] | None = None,
     require_evidence: bool = True,
+    require_judgment_reason: bool = True,
     duplicate_threshold: int = 3,
     require_execution_contract: bool = True,
 ) -> dict[str, Any]:
@@ -158,6 +161,7 @@ def write_results(
         setup_trace=setup_trace,
         execution_manifest=execution_manifest,
         require_evidence=require_evidence,
+        require_judgment_reason=require_judgment_reason,
         duplicate_threshold=duplicate_threshold,
         require_execution_contract=require_execution_contract,
     )
@@ -180,6 +184,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--allow-missing-evidence",
         action="store_true",
         help="允许没有 evidence（不推荐；默认会阻止保存）",
+    )
+    parser.add_argument(
+        "--allow-missing-judgment-reason",
+        action="store_true",
+        help="允许 actual 缺少 AI执行步骤/操作结果/判断理由段落（仅用于兼容旧中间结果）",
     )
     parser.add_argument(
         "--duplicate-threshold",
@@ -214,6 +223,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             document,
             args.out,
             require_evidence=not args.allow_missing_evidence,
+            require_judgment_reason=not args.allow_missing_judgment_reason,
             duplicate_threshold=args.duplicate_threshold,
             require_execution_contract=not args.allow_incomplete,
         )

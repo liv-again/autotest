@@ -70,6 +70,17 @@
         "blocked_reason": {"type": "string"},
         "blocker": {"type": "string"},
         "reason": {"type": "string"},
+        "judgment_reason": {"type": "string", "minLength": 1},
+        "judgment": {
+          "type": "object",
+          "required": ["status", "reason"],
+          "properties": {
+            "status": {"type": "string", "minLength": 1},
+            "reason": {"type": "string", "minLength": 1},
+            "source": {"type": "string"}
+          },
+          "additionalProperties": true
+        },
         "status": {"type": "string", "minLength": 1},
         "actual": {"type": "string"},
         "depends_on": {
@@ -112,6 +123,17 @@
         "skip_reason": {"type": "string"},
         "not_executed_reason": {"type": "string"},
         "reason": {"type": "string"},
+        "judgment_reason": {"type": "string", "minLength": 1},
+        "judgment": {
+          "type": "object",
+          "required": ["status", "reason"],
+          "properties": {
+            "status": {"type": "string", "minLength": 1},
+            "reason": {"type": "string", "minLength": 1},
+            "source": {"type": "string"}
+          },
+          "additionalProperties": true
+        },
         "actual": {"type": "string"},
         "pre_review_status": {"type": "string"},
         "llm_review": {"type": "object"},

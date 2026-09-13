@@ -1,7 +1,7 @@
 """Integrity helpers for the external LLM review handoff.
 
 The mobile executor produces the evidence and the row-level review queue.
-Codex or OpenCode only returns semantic verdicts.  This module gives all
+The selected Agent only returns semantic verdicts.  This module gives all
 three artifacts stable bindings so a stale reviewer output, changed execution
 record, or replaced screenshot cannot be silently merged.
 """
@@ -15,8 +15,6 @@ from typing import Any, Mapping
 
 
 CONTRACT_SCHEMA_VERSION = "1.1"
-SUPPORTED_AGENTS = {"codex": "Codex", "opencode": "OpenCode"}
-
 
 class ReviewContractError(ValueError):
     """Raised when a queue/review artifact does not match its source run."""
@@ -145,10 +143,12 @@ def make_queue_binding(
 def normalize_agent(value: Any) -> str:
     if isinstance(value, Mapping):
         value = value.get("name") or value.get("agent") or value.get("provider")
-    normalized = _text(value).casefold()
-    if normalized not in SUPPORTED_AGENTS:
-        raise ReviewContractError("reviewer agent 必须是 Codex 或 OpenCode")
-    return SUPPORTED_AGENTS[normalized]
+    normalized = _text(value)
+    if not normalized:
+        raise ReviewContractError("reviewer agent 名称不能为空")
+    if len(normalized) > 80 or any(ord(char) < 32 for char in normalized):
+        raise ReviewContractError("reviewer agent 名称必须是长度不超过 80 的可打印文本")
+    return normalized
 
 
 def validate_agent_metadata(review_document: Mapping[str, Any]) -> dict[str, str]:

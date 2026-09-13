@@ -15,7 +15,7 @@ from tools.llm_review_contract import (
     validate_queue_integrity,
     validate_review_binding,
 )
-from tools.results_quality import status_bucket
+from tools.results_quality import append_judgment_reason, judgment_reason_issue, status_bucket
 
 
 class LLMReviewError(ValueError):
@@ -106,6 +106,9 @@ def merge_reviews(
                     raise ValueError
             except (TypeError, ValueError) as exc:
                 raise LLMReviewError(f"LLM 置信度必须在 0..1: {identity}") from exc
+        reason_issue = judgment_reason_issue(review.get("reason"))
+        if reason_issue:
+            raise LLMReviewError(f"LLM 复核项的判断理由无效: {identity}: {reason_issue}")
         review_map[identity] = dict(review)
 
     merged: list[dict[str, Any]] = []
@@ -140,6 +143,29 @@ def merge_reviews(
             "confidence": review.get("confidence"),
             "visible_facts": review.get("visible_facts") or [],
             "reason": reason,
+        }
+        if not reason:
+            raise LLMReviewError(f"无法为用例生成非空判断理由: {identity}")
+
+        actual = _text(item.get("actual")) or _text(item.get("observation"))
+        if actual:
+            item["actual"] = append_judgment_reason(actual, final_status, reason)
+        for step in item.get("steps") or []:
+            if isinstance(step, dict):
+                step_actual = _text(step.get("actual")) or _text(step.get("observation"))
+                if step_actual:
+                    step["actual"] = append_judgment_reason(step_actual, final_status, reason)
+                step["judgment_reason"] = reason
+                step["judgment"] = {
+                    "status": final_status,
+                    "reason": reason,
+                    "source": "llm_review" if executor_bucket != "blocked" else "executor_gate",
+                }
+        item["judgment_reason"] = reason
+        item["judgment"] = {
+            "status": final_status,
+            "reason": reason,
+            "source": "llm_review" if executor_bucket != "blocked" else "executor_gate",
         }
         if reason and final_status != "✅通过":
             item["blocked_reason"] = reason

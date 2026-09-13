@@ -1,9 +1,11 @@
-"""Build a module/page-group plan for row-scoped Excel UI execution.
+"""Build the deterministic Excel/profile context consumed by an Agent.
 
-The LLM reads a Sheet once and produces the planning context.  The executor
-may reuse navigation inside one *navigation context*, but it still consumes
-one Excel row at a time and records evidence for every row.  A page name alone
-is deliberately not a grouping key: ``沪深A股-个股详情`` and
+This module is deliberately not an LLM planner.  It normalises merged Excel
+hierarchy cells, preserves source order, and groups contiguous navigation
+contexts so the selected Agent has a compact, auditable input.  The Agent
+must author the actual low-level agent_action_plan consumed by the device
+runner.  A page
+name alone is deliberately not a grouping key: ``沪深A股-个股详情`` and
 ``港股-个股详情`` are different execution contexts.
 """
 
@@ -43,6 +45,9 @@ CANONICAL_COLUMNS = {
 
 LEVEL_FIELDS = ("level_1", "level_2", "level_3", "level_4")
 GROUP_CONTEXT_FIELDS = LEVEL_FIELDS + ("entry",)
+GENERIC_PLANNING_KNOWLEDGE_PATH = Path(__file__).resolve().with_name(
+    "generic_planning_knowledge.yaml"
+)
 
 
 def _text(value: Any) -> str:
@@ -322,6 +327,27 @@ def _profile_context(profile_path: str | Path | None) -> dict[str, Any]:
     }
 
 
+def _generic_planning_knowledge() -> dict[str, Any]:
+    """Load the cross-App planning guidance exposed to the selected Agent."""
+
+    path = GENERIC_PLANNING_KNOWLEDGE_PATH
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise RuntimeError(f"无法读取通用规划知识 {path}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise RuntimeError(f"通用规划知识必须是 YAML 对象: {path}")
+    techniques = document.get("techniques")
+    if not isinstance(techniques, list) or not techniques:
+        raise RuntimeError(f"通用规划知识缺少非空 techniques: {path}")
+    if any(not isinstance(item, dict) or not item.get("id") for item in techniques):
+        raise RuntimeError(f"通用规划知识中的 technique 必须包含 id: {path}")
+    return {
+        "source_file": str(path),
+        **document,
+    }
+
+
 def _attach_profile_hints(groups: list[dict[str, Any]], profile: dict[str, Any]) -> None:
     entries = profile.get("entries") or []
     for group in groups:
@@ -369,17 +395,23 @@ def build_module_plan(
         )
     return {
         "schema_version": "1.1",
-        "plan_type": "module_page_group_execution_plan",
+        "plan_type": "module_page_group_execution_context",
+        "planning_mode": "context_only",
+        "planner_backend": "deterministic_excel_normalizer",
+        "agent_action_plan_required": True,
         "planning_scope": "module_page_group",
         "execution_scope": "single_excel_row",
         "review_scope": "module_exceptions",
+        "generic_planning_knowledge": _generic_planning_knowledge(),
         "page_batching_allowed": True,
         "grouping_strategy": "contiguous_navigation_context",
-        "llm_instruction": (
-            "LLM 读取模块用例和 App 画像后按导航上下文规划页面组；"
-            "页面组只复用导航，业务动作、截图、断言和结果仍按 Excel 行独立执行。"
+        "agent_instruction": (
+            "当前 Agent 读取本上下文和 App 画像后，为每条用例生成结构化 navigation/actions；"
+            "页面组只复用导航，业务动作、截图、断言和结果仍按 Excel 行独立执行；"
+            "规划涉及横屏列表、滑动、目标元素查找或排序时，必须参考"
+            "generic_planning_knowledge 中适用的观察和验证规则。"
         ),
-        "llm_roles": {
+        "agent_roles": {
             "planner": "按一级至四级目录、入口和前置条件识别导航上下文，不能仅按目标页面名称合并用例。",
             "executor": "组内复用已验证入口；每行执行前后重新确认页面，异常行允许一次运行时重新规划。",
             "reviewer": "依据每行 action_trace、页面观察、预期结果和截图判断，不得用点击成功替代结果验证。",
@@ -400,6 +432,8 @@ def build_module_plan(
             "manifest_version": "2.0",
             "mode": "full",
             "execution_scope": "single_excel_row",
+            "agent_plan_required": True,
+            "llm_plan_required": True,
             "llm_review_required": True,
             "source_file": str(Path(source).expanduser().resolve()),
             "source_sheets": [module["sheet"] for module in modules],
@@ -440,7 +474,7 @@ def write_plan(plan: dict[str, Any], output: str | Path) -> Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="按 Sheet 生成模块规划，供逐行执行器消费")
+    parser = argparse.ArgumentParser(description="按 Sheet 生成 Excel/profile 事实上下文，供 Agent 生成动作计划")
     parser.add_argument("--source", required=True, help=".xls/.xlsx 用例文件")
     parser.add_argument("--sheet", action="append", dest="sheets", help="指定 Sheet，可重复；默认读取全部")
     parser.add_argument("--profile", help="App profile.yaml，为页面组规划提供入口和版本上下文")

@@ -103,6 +103,101 @@ _OPERATION_PREFIXES = (
     "上拉",
 )
 
+ACTUAL_STEP_LABEL = "AI执行步骤："
+ACTUAL_RESULT_LABEL = "操作结果："
+ACTUAL_REASON_LABEL = "判断理由："
+_GENERIC_REASON_EXACT = {
+    "ok",
+    "pass",
+    "success",
+    "通过",
+    "不通过",
+    "正常",
+    "失败",
+    "符合预期",
+    "完成",
+}
+
+
+def append_judgment_reason(actual: Any, status: Any, reason: Any) -> str:
+    """Append the required verdict reason to an executor-owned actual.
+
+    ``actual`` is deliberately kept as a readable three-section text value
+    because this is what is written into the Excel ``🤖AI实测结果`` column.
+    Any older judgment suffix is removed before the new one is appended so a
+    retest or LLM review cannot produce duplicated verdict sections.
+    """
+
+    actual_text = _text(actual)
+    reason_text = _text(reason)
+    if not actual_text:
+        raise ValueError("actual 不能为空，无法追加判断理由")
+    if not reason_text:
+        raise ValueError("判断理由不能为空")
+
+    cut_positions = [
+        position
+        for label in (ACTUAL_REASON_LABEL, "判断结论：")
+        if (position := actual_text.find(label)) >= 0
+    ]
+    if cut_positions:
+        actual_text = actual_text[: min(cut_positions)].rstrip()
+
+    status_text = _text(status) or "未判定"
+    verdict_prefix = "" if reason_text.startswith("判定为") else f"判定为{status_text}。"
+    return f"{actual_text}\n{ACTUAL_REASON_LABEL}{verdict_prefix}{reason_text}".strip()
+
+
+def actual_contract_issue(actual: Any) -> str | None:
+    """Return a reason when an actual is missing one of its three sections."""
+
+    text = _text(actual)
+    if not text:
+        return "actual 为空"
+
+    positions = {
+        ACTUAL_STEP_LABEL: text.find(ACTUAL_STEP_LABEL),
+        ACTUAL_RESULT_LABEL: text.find(ACTUAL_RESULT_LABEL),
+        ACTUAL_REASON_LABEL: text.find(ACTUAL_REASON_LABEL),
+    }
+    missing = [label.rstrip("：") for label, position in positions.items() if position < 0]
+    if missing:
+        return f"actual 缺少必填段落：{'、'.join(missing)}"
+    ordered = [positions[ACTUAL_STEP_LABEL], positions[ACTUAL_RESULT_LABEL], positions[ACTUAL_REASON_LABEL]]
+    if ordered != sorted(ordered):
+        return "actual 必须按 AI执行步骤、操作结果、判断理由 的顺序组织"
+
+    result_start = positions[ACTUAL_RESULT_LABEL] + len(ACTUAL_RESULT_LABEL)
+    reason_start = positions[ACTUAL_REASON_LABEL] + len(ACTUAL_REASON_LABEL)
+    if not text[result_start : positions[ACTUAL_REASON_LABEL]].strip():
+        return "actual 的操作结果不能为空"
+    if not text[reason_start:].strip():
+        return "actual 的判断理由不能为空"
+    reason_text = text[reason_start:].strip()
+    reason_body = re.sub(r"^判定为[^。！？:：\n]+[。！？:：]?\s*", "", reason_text, count=1)
+    if judgment_reason_issue(reason_body):
+        return "actual 的判断理由不能是通用占位语"
+    return None
+
+
+def judgment_reason_required(status: Any) -> bool:
+    """Whether a result is a concluded/attempted case that needs a reason."""
+
+    return status_bucket(status) in {"pass", "fail", "partial", "blocked", "pending"}
+
+
+def judgment_reason_issue(reason: Any) -> str | None:
+    """Return a reason when a verdict explanation is empty or generic."""
+
+    text = _text(reason)
+    if not text:
+        return "判断理由为空"
+    if _compact(text) in {_compact(item) for item in _GENERIC_REASON_EXACT}:
+        return "判断理由不能是通用占位语"
+    if len(text) < 4:
+        return "判断理由过短，无法说明判定依据"
+    return None
+
 
 def status_bucket(status: Any) -> str:
     """Return the semantic bucket used for retest selection and rollups."""
@@ -188,6 +283,7 @@ def validate_result_records(
     *,
     duplicate_threshold: int = 3,
     require_evidence: bool = False,
+    require_judgment_reason: bool = False,
 ) -> list[str]:
     """Validate normalized result records and return all quality errors.
 
@@ -214,6 +310,10 @@ def validate_result_records(
                 )
                 if issue:
                     errors.append(f"{location}: {issue}")
+                if require_judgment_reason and judgment_reason_required(step.get("status")):
+                    issue = actual_contract_issue(step.get("actual"))
+                    if issue:
+                        errors.append(f"{location}: {issue}")
                 if require_evidence and not _evidence_present(step):
                     errors.append(f"{location}: 缺少可追溯 evidence")
                 actual = _text(step.get("actual"))
@@ -238,6 +338,10 @@ def validate_result_records(
             issue = actual_issue(record.get("actual"))
             if issue:
                 errors.append(f"{identity}: {issue}")
+            if require_judgment_reason and judgment_reason_required(record.get("status")):
+                issue = actual_contract_issue(record.get("actual"))
+                if issue:
+                    errors.append(f"{identity}: {issue}")
             if require_evidence and not _evidence_present(record):
                 errors.append(f"{identity}: 缺少可追溯 evidence")
             actual = _text(record.get("actual"))
@@ -280,6 +384,7 @@ def ensure_result_quality(
     *,
     duplicate_threshold: int = 3,
     require_evidence: bool = False,
+    require_judgment_reason: bool = False,
 ) -> None:
     """Raise :class:`ResultQualityError` when any quality gate fails."""
 
@@ -287,6 +392,7 @@ def ensure_result_quality(
         records,
         duplicate_threshold=duplicate_threshold,
         require_evidence=require_evidence,
+        require_judgment_reason=require_judgment_reason,
     )
     if errors:
         raise ResultQualityError("; ".join(errors))

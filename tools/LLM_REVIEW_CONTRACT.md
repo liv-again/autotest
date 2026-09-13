@@ -1,6 +1,47 @@
-# 外部 LLM 复核契约
+# Agent 执行计划与逐行复核契约
 
-`llm_review_queue.json` 是一次运行的唯一复核入口。Codex 和 OpenCode 是二选一的复核 Agent，不能直接改写执行记录或截图；复核 Agent 只读取队列中的事实和证据，并输出 `llm_reviews.json`。
+## 执行动作计划（先于设备执行）
+
+Excel/profile 的读取和层级归一化只生成当前 Agent 的输入上下文，不会把
+Excel 的“操作描述”直接交给固定字符串解析器。当前选定的 Agent 必须先产出
+`agent_action_plan.json`，再启动执行器：
+
+```powershell
+python tools/agent_plan.py context `
+  --source <cases.xlsx> `
+  --profile apps/<app>/profile.yaml `
+  --out <run>/agent_context.json
+
+# Agent 读取 context 后生成 agent_action_plan.json，再由执行器校验
+python tools/agent_plan.py validate `
+  --source <cases.xlsx> `
+  --plan <run>/agent_action_plan.json
+
+python tools/_run_three_sheets.py `
+  --source <cases.xlsx> `
+  --action-plan <run>/agent_action_plan.json `
+  --output <run>
+```
+
+计划必须逐行提供 `navigation`、`actions` 和可观察的 `target_page`。动作
+只能是 `tap_text`、`tap_id`、`tap_xy`、`tap_bbox`、`type_text`、`key`、
+`swipe`、`rotate`、`wait`、`observe`、`assert_text`、`assert_id` 等低层
+原语；不能提供自由格式 shell 命令，也不能只提供 Excel 原文。执行器只
+负责调用这些原语、采集 UI 树和截图，不负责理解用例语义。没有
+`--action-plan` 时，执行器会拒绝启动；旧固定规则解析仅能通过显式
+`--legacy-deterministic` 做迁移诊断，并不能称为 Agent 驱动执行。
+
+Agent 计划产生的成功动作不会直接变成通过。执行器先记录为
+`🟡待验证`，然后由 Agent 读取该行的 `action_trace`、执行后页面观察、
+独立截图和 Excel `expected`，生成下面的 `llm_reviews.json`。确定性页面、
+动作或取证失败仍然是阻塞，不能被复核升级为通过。
+
+`llm_review_queue.json` 是一次运行的唯一复核入口。复核 Agent 不能直接改写执行记录或截图；它只读取队列中的事实和证据，并输出 `llm_reviews.json`。
+
+队列中的 `review_agent_default` 来自本次 `agent_action_plan.json` 的
+`planner.agent`/`planner.model`。复核 Agent 默认应使用该 Agent 和模型；如果明确
+使用了不同的 Agent 或模型，必须在 `llm_reviews.json.agent` 中记录实际值。规划、
+运行时恢复和复核的 prompt_version 可以不同，因为三者承担的任务不同。
 
 ## 运行链路
 
@@ -8,7 +49,7 @@
 execution_records.json
         ↓ 生成
 llm_review_queue.json
-        ↓ Codex 或 OpenCode 逐行复核
+        ↓ 选定的复核 Agent 逐行复核
 llm_reviews.json
         ↓ tools/llm_review_results.py 校验绑定和证据
 results.reviewed.json
@@ -32,7 +73,7 @@ python tools/llm_review_results.py merge `
 {
   "schema_version": "1.1",
   "agent": {
-    "name": "Codex",
+    "name": "当前实际使用的 Agent",
     "model": "实际使用的模型名称",
     "prompt_version": "row-review-v1"
   },
@@ -47,7 +88,17 @@ python tools/llm_review_results.py merge `
 }
 ```
 
-`agent.name` 只能是 `Codex` 或 `OpenCode`，`model` 和 `prompt_version` 不能为空。每个 `reviews` 项必须带当前队列中的 `case_id` 以及 `target_page_match`、`action_effect_match`、`expected_result_match`、`confidence`、`visible_facts`、`reason` 和 `status`。
+`agent.name` 必须是本次实际使用的非空 Agent 名称，可以是 Codex、OpenCode、Trae、Claude 或其他接入的 Agent；不得伪造或留空。`model` 和 `prompt_version` 不能为空。每个 `reviews` 项必须带当前队列中的 `case_id` 以及 `target_page_match`、`action_effect_match`、`expected_result_match`、`confidence`、`visible_facts`、`reason` 和 `status`。`reason` 必须是非空、基于截图与执行事实的具体判断理由，不能只写“通过”“正常”或“符合预期”。
+
+合并复核结果时，执行器会把该理由写入每条结果的 `actual`，固定保留以下三段：
+
+```text
+AI执行步骤：...
+操作结果：...
+判断理由：判定为✅通过/❌不通过/🟡待验证/⛔阻塞。<具体理由>
+```
+
+缺少非空 `reason`，或最终 `actual` 缺少上述任一段落，严格结果门禁会拒绝生成正式 Excel 结果。
 
 ## 合并时的硬校验
 
@@ -56,7 +107,7 @@ python tools/llm_review_results.py merge `
 - 执行记录规范化摘要不一致：拒绝，防止执行记录被替换。
 - 截图路径、文件大小或 SHA-256 不一致：拒绝，防止截图被替换。
 - 队列被手工修改：拒绝。
-- Agent 不是 Codex/OpenCode，或缺少模型/提示词版本：拒绝。
+- Agent 名称为空，或缺少模型/提示词版本：拒绝。
 - 用例集合多出、缺少或重复：拒绝。
 
 确定性执行阻塞仍然是终态，LLM 只能解释，不能把阻塞升级为通过。

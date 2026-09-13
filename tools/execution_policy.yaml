@@ -4,6 +4,7 @@ require_manifest: true
 fail_on_incomplete: true
 require_action_trace: true
 require_observation: true
+require_judgment_reason: true
 require_evidence: true
 require_unique_case_evidence: true
 # Page batching means navigation-context reuse only.  Business actions,
@@ -38,19 +39,31 @@ llm_execution:
   action_scope: single_excel_row
   result_review_scope: single_excel_row
   exception_replan_scope: single_excel_row
+  # Once a row hits a live UI exception, the Agent owns recovery for the
+  # entire row.  Each newly exposed blocker starts another bounded turn.
+  case_takeover_scope: single_excel_row
+  case_takeover_enabled: true
+  max_case_takeover_turns: 5
+  max_case_takeover_actions: 64
+  max_runtime_recovery_attempts: 5
   profile_feedback_scope: run
   require_screenshot_and_action_trace: true
   hard_gate_cannot_be_overridden: true
   queue_artifact: llm_review_queue.json
   verdict_merge_tool: tools/llm_review_results.py
   review_contract: tools/LLM_REVIEW_CONTRACT.md
-  allowed_agents: [Codex, OpenCode]
+  # Agent names are recorded for audit but are intentionally not allow-listed;
+  # the same execution contract must support Codex, OpenCode, Trae, Claude,
+  # or another configured Agent.
   require_run_binding: true
   require_queue_binding: true
   require_execution_digest: true
   require_evidence_sha256: true
   require_agent_model: true
   require_prompt_version: true
+  runtime_recovery_transport: external_agent_command_stdio_json
+  runtime_recovery_rechecks_target_page: true
+  runtime_recovery_replay_requires_safe: true
 
 profile_feedback:
   enabled: true
@@ -87,5 +100,6 @@ result_quality:
   require_action_trace: true
   require_observation: true
   require_independent_evidence: true
+  require_judgment_reason: true
   duplicate_actual_threshold: 3
   allow_contextual_repeat_when_action_or_expected_present: true

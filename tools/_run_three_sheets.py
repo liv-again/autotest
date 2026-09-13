@@ -1,8 +1,16 @@
+"""Generic Agent-driven Excel/App execution core.
+
+App-specific UI behaviour is provided by ``tools.app_adapter``.  The default
+selection remains the Guotou profile for backward compatibility, but the
+runner itself does not own Guotou package names, coordinates, or page rules.
+"""
+
 from __future__ import annotations
 
 import datetime
 import argparse
 import json
+import os
 import shutil
 import sys
 import time
@@ -10,7 +18,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 import xlrd
 
@@ -20,6 +28,22 @@ from tools.exception_queue import build_exception_queue
 from tools.execution_journal import ExecutionJournal, JournalError
 from tools.execution_gate import load_execution_policy
 from tools.module_planner import build_module_plan
+from tools.agent_plan import ACTION_TYPES, AgentPlanError, load_action_plan, sha256_file
+from tools.agent_binding import resolve_agent_binding, runtime_agent_environment
+from tools.agent_recovery import (
+    AgentRecoveryError,
+    CommandRecoveryAgent,
+    build_recovery_prompt,
+    validate_recovery_plan,
+)
+from tools.app_adapter import (
+    AppAdapter,
+    AppAdapterError,
+    AppConfig,
+    infer_app_slug_from_profile,
+    load_app_adapter,
+    load_app_config,
+)
 from tools.page_execution import (
     PageContract,
     ensure_target_page as _ensure_target_page,
@@ -28,27 +52,30 @@ from tools.page_execution import (
 )
 from tools.profile_feedback import build_profile_feedback
 from tools.llm_review_queue import build_review_queue
+from tools.results_quality import append_judgment_reason
 
 
-PACKAGE = "com.hexin.plat.android.AnxinSecurity"
-DEVICE = "c923178d"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SOURCE = PROJECT_ROOT / "国投行情测试用例(1).xls"
-APP_PROFILE = PROJECT_ROOT / "apps/guotou/profile.yaml"
-OUTPUT = PROJECT_ROOT / "output/2026-09-06-guotou-hk-other-fundflow-full"
-SHOTS = OUTPUT / "shots"
-SHEETS = ("股指", "沪深京", "板块", "港股", "其他", "看资金")
-MARKET_TABS = {
-    "股指": (108, 277),
-    "沪深京": (324, 277),
-    "板块": (540, 277),
-    "港股": (756, 277),
-    "其他": (972, 277),
-}
-TOP_QUOTE_SHEETS = tuple(MARKET_TABS)
+DEFAULT_APP_SLUG = "guotou"
+DEFAULT_DEVICE = "c923178d"
+# Compatibility aliases for callers that imported the old runner module.
+# Runtime execution resolves the selected App from --app/app.yaml.
+DEVICE = DEFAULT_DEVICE
+SOURCE: Path | None = None
+APP_PROFILE: Path | None = None
+OUTPUT: Path | None = None
+SHOTS: Path | None = None
 MAX_SOFT_BACK = 3
 PAGE_READY_RETRIES = 5
 _EXECUTION_POLICY = load_execution_policy()
+
+# main() binds the selected adapter before device work starts.  The lazy
+# Guotou compatibility adapter keeps the old helper API usable by diagnostics
+# and tests without making the generic runner import one app's UI rules at
+# module import time.
+_ACTIVE_ADAPTER: AppAdapter | None = None
+_ACTIVE_APP_CONFIG: AppConfig | None = None
+_COMPAT_ADAPTER: AppAdapter | None = None
 
 
 def _policy_int(section: str, key: str, default: int) -> int:
@@ -64,6 +91,16 @@ def _policy_int(section: str, key: str, default: int) -> int:
 MAX_SOFT_BACK = _policy_int("state_reset", "max_soft_back", MAX_SOFT_BACK)
 PAGE_READY_RETRIES = _policy_int("page_gate", "page_ready_retries", PAGE_READY_RETRIES)
 MAX_ACTION_RETRIES = _policy_int("page_gate", "max_action_retries", 1)
+MAX_CASE_TAKEOVER_TURNS = _policy_int(
+    "llm_execution",
+    "max_case_takeover_turns",
+    _policy_int("llm_execution", "max_runtime_recovery_attempts", 5),
+)
+MAX_CASE_TAKEOVER_ACTIONS = _policy_int(
+    "llm_execution", "max_case_takeover_actions", 64
+)
+# Keep the old import name available to diagnostics and third-party runners.
+MAX_RUNTIME_AGENT_RECOVERY_ATTEMPTS = MAX_CASE_TAKEOVER_TURNS
 
 
 def now() -> str:
@@ -91,6 +128,92 @@ class ModuleSession:
     recovery_restart_count: int = 0
     page_group_reuse_count: int = 0
     runtime_replan_count: int = 0
+    agent_recovery_count: int = 0
+    agent_recovery_success_count: int = 0
+    agent_recovery_failure_count: int = 0
+
+
+@dataclass
+class RuntimeRecoveryOutcome:
+    """Result of the bounded Agent recovery loop for one Excel row."""
+
+    setup_ok: bool
+    action_ok: bool
+    action_mode: str
+    error_detail: str
+    elements: list[dict]
+    page_observation: str
+    attempts: list[dict[str, Any]]
+
+
+class RunnerAdapterRuntime:
+    """Small callback facade exposed to App adapters.
+
+    Methods resolve the runner globals at call time, so existing tests and
+    compatibility wrappers can still monkey-patch a helper without the
+    adapter retaining stale function references.
+    """
+
+    @property
+    def max_soft_back(self) -> int:
+        return MAX_SOFT_BACK
+
+    @property
+    def max_action_retries(self) -> int:
+        return MAX_ACTION_RETRIES
+
+    def event(self, *args, **kwargs):
+        return event(*args, **kwargs)
+
+    def screen_elements(self):
+        return screen_elements()
+
+    def wait_for_page(self, *args, **kwargs):
+        return wait_for_page(*args, **kwargs)
+
+    def wait_for_selected(self, *args, **kwargs):
+        return wait_for_selected(*args, **kwargs)
+
+    def selected_label(self, *args, **kwargs):
+        return selected_label(*args, **kwargs)
+
+    def tap_text(self, *args, **kwargs):
+        return tap_text(*args, **kwargs)
+
+    def tap_id(self, *args, **kwargs):
+        return tap_id(*args, **kwargs)
+
+    def tap_xy(self, *args, **kwargs):
+        return tap_xy(*args, **kwargs)
+
+    def key_back(self, *args, **kwargs):
+        return key_back(*args, **kwargs)
+
+    def rotate(self, *args, **kwargs):
+        return rotate(*args, **kwargs)
+
+    def launch_packages(self, *args, **kwargs):
+        return launch_packages(*args, **kwargs)
+
+
+_RUNNER_ADAPTER_RUNTIME = RunnerAdapterRuntime()
+
+
+def _active_adapter() -> AppAdapter:
+    """Return the bound App adapter, with a Guotou-only test compatibility fallback."""
+
+    global _COMPAT_ADAPTER
+    if _ACTIVE_ADAPTER is not None:
+        return _ACTIVE_ADAPTER
+    if _COMPAT_ADAPTER is None:
+        compatibility_config = load_app_config(PROJECT_ROOT, DEFAULT_APP_SLUG)
+        _COMPAT_ADAPTER = load_app_adapter(compatibility_config, _RUNNER_ADAPTER_RUNTIME)
+    return _COMPAT_ADAPTER
+
+
+def _top_quote_sheets() -> tuple[str, ...]:
+    value = getattr(_active_adapter(), "top_quote_sheets", ())
+    return tuple(value or ())
 
 
 def event(events: list[dict], kind: str, target: str, result: str, detail: str = "") -> None:
@@ -98,6 +221,29 @@ def event(events: list[dict], kind: str, target: str, result: str, detail: str =
     if detail:
         item["detail"] = detail
     events.append(item)
+
+
+def launch_packages(events: list[dict], packages: Iterable[str]) -> bool:
+    """Common package launcher used by every adapter.
+
+    The runner never chooses an App package by itself.  It receives an ordered
+    candidate list from the adapter/configuration and tries each candidate
+    once, recording the actual package command in the trace.
+    """
+
+    candidates = tuple(dict.fromkeys(str(package).strip() for package in packages if str(package).strip()))
+    if not candidates:
+        event(events, "launch", "App package", "failed", "当前 App 未配置 packages")
+        return False
+    for package in candidates:
+        rc1, _, err1 = droid.adb("-s", DEVICE, "shell", "am", "force-stop", package)
+        rc2, _, err2 = droid.adb("-s", DEVICE, "shell", "monkey", "-p", package, "1")
+        wait_short(1.8)
+        ok = rc1 == 0 and rc2 == 0
+        event(events, "launch", package, "success" if ok else "failed", (err1 + err2).strip())
+        if ok:
+            return True
+    return False
 
 
 def tap_text(events: list[dict], text: str) -> bool:
@@ -140,6 +286,65 @@ def swipe(events: list[dict], x1: int, y1: int, x2: int, y2: int, target: str) -
     return ok
 
 
+def swipe_duration(
+    events: list[dict],
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    duration_ms: int,
+    target: str,
+) -> bool:
+    """Execute one bounded swipe selected by an Agent action plan."""
+
+    rc, _, err = droid.adb(
+        "shell",
+        "input",
+        "swipe",
+        str(x1),
+        str(y1),
+        str(x2),
+        str(y2),
+        str(duration_ms),
+    )
+    ok = rc == 0
+    event(events, "swipe", target, "success" if ok else "failed", err.strip())
+    wait_short()
+    return ok
+
+
+def type_text(events: list[dict], text: str) -> bool:
+    """Type text from a validated Agent plan and record the real action."""
+
+    rc, _, err = droid.adb("shell", "input", "text", text)
+    ok = rc == 0
+    # Do not put the value in the event target: account/code data should not
+    # be copied into the readable report or logs.  The plan remains the
+    # auditable source of the requested input action.
+    event(events, "type", "输入框", "success" if ok else "failed", err.strip())
+    wait_short()
+    return ok
+
+
+def key_name(events: list[dict], key: str) -> bool:
+    """Press one of the small allow-list of Android key names."""
+
+    key = str(key).upper()
+    rc, _, err = droid.adb("shell", "input", "keyevent", f"KEYCODE_{key}")
+    ok = rc == 0
+    event(events, "key", key, "success" if ok else "failed", err.strip())
+    wait_short()
+    return ok
+
+
+def wait_action(events: list[dict], seconds: float) -> bool:
+    seconds = max(0.0, float(seconds))
+    event(events, "wait", f"{seconds:g}秒", "success", "Agent 计划要求等待页面稳定")
+    if seconds:
+        time.sleep(seconds)
+    return True
+
+
 def rotate(events: list[dict], landscape: bool) -> bool:
     rotation = "1" if landscape else "0"
     rc1, _, err1 = droid.adb("-s", DEVICE, "shell", "settings", "put", "system", "accelerometer_rotation", "0")
@@ -151,20 +356,9 @@ def rotate(events: list[dict], landscape: bool) -> bool:
 
 
 def launch_market(events: list[dict]) -> bool:
-    rc1, _, err1 = droid.adb("-s", DEVICE, "shell", "am", "force-stop", PACKAGE)
-    rc2, _, err2 = droid.adb("-s", DEVICE, "shell", "monkey", "-p", PACKAGE, "1")
-    wait_short(1.8)
-    ok = rc1 == 0 and rc2 == 0
-    event(events, "launch", PACKAGE, "success" if ok else "failed", (err1 + err2).strip())
-    if not ok:
-        return False
-    # Prefer the accessibility label.  Keep the known coordinate as a single
-    # retry for versions where the bottom bar is not exposed to uiautomator.
-    if tap_text(events, "行情") and wait_for_page(is_market_shell, "行情根页面"):
-        return True
-    if tap_xy(events, 324, 2263, "底部行情（坐标重试）"):
-        return wait_for_page(is_market_shell, "行情根页面")
-    return False
+    """Compatibility wrapper; package/module launch belongs to the adapter."""
+
+    return _active_adapter().launch(events)
 
 
 def screen_elements() -> list[dict]:
@@ -176,6 +370,24 @@ def screen_elements() -> list[dict]:
 
 def screen_blob(elements: list[dict]) -> str:
     return " ".join((e.get("text") or "") + " " + (e.get("desc") or "") + " " + (e.get("id") or "") for e in elements)
+
+
+def transient_overlay_detail(elements: list[dict]) -> str:
+    """Return a hint when the selected App declares a likely overlay signal.
+
+    This is deliberately only a trigger for Agent analysis.  It does not
+    infer a close button or execute any action, because words such as
+    ``关闭`` can be a legitimate business control on a normal page.
+    """
+
+    signals = tuple(getattr(_active_adapter(), "transient_overlay_signals", ()) or ())
+    if not signals:
+        return ""
+    blob = screen_blob(elements)
+    matched = [signal for signal in signals if signal and signal in blob]
+    if not matched:
+        return ""
+    return "疑似临时覆盖层信号：" + "、".join(dict.fromkeys(matched))
 
 
 def has_label(elements: list[dict], label: str) -> bool:
@@ -195,18 +407,17 @@ def has_title(elements: list[dict], title: str) -> bool:
 
 
 def is_market_shell(elements: list[dict]) -> bool:
-    """Whether the app is on the market module's top-level tab page."""
+    """Compatibility wrapper; the actual contract belongs to the App adapter."""
 
-    return (
-        has_id(elements, "title_bar_middle")
-        and all(has_label(elements, label) for label in ("沪深京", "港股", "其他"))
-    )
+    predicate = getattr(_active_adapter(), "is_market_shell", None)
+    return bool(predicate and predicate(elements))
 
 
 def is_fund_flow_root(elements: list[dict]) -> bool:
-    """Whether the app is on the 看资金 module root page."""
+    """Compatibility wrapper; the actual contract belongs to the App adapter."""
 
-    return has_id(elements, "titlebar_leftview_text") and has_label(elements, "看资金")
+    predicate = getattr(_active_adapter(), "is_fund_flow_root", None)
+    return bool(predicate and predicate(elements))
 
 
 def wait_for_page(predicate, description: str, retries: int = PAGE_READY_RETRIES) -> bool:
@@ -275,636 +486,104 @@ def wait_for_orientation(landscape: bool, retries: int = PAGE_READY_RETRIES) -> 
 
 
 def is_search_page(elements: list[dict]) -> bool:
-    """The search page has a stable, page-specific UI contract."""
-
-    return has_id(elements, "stocksearch") or (
-        has_id(elements, "search_edit_layout")
-        and has_label(elements, "请输入代码或简拼")
-        and has_label(elements, "取消")
-    )
+    predicate = getattr(_active_adapter(), "is_search_page", None)
+    return bool(predicate and predicate(elements))
 
 
 def is_stock_detail_page(elements: list[dict]) -> bool:
-    """Recognize a stock detail page, not merely a generic content container."""
-
-    if is_search_page(elements):
-        return False
-    # ``page_queue_nav_bar`` can also exist on a market list page.  Require
-    # the detail-specific animation/back controls as well, otherwise a list
-    # page containing many stocks is incorrectly treated as a detail page.
-    return has_id(elements, "navi_animation_label") and any(
-        has_id(elements, resource_id)
-        for resource_id in ("backButton", "al_leftbutton", "al_viewfilpper", "navi_title_right")
-    )
+    predicate = getattr(_active_adapter(), "is_stock_detail_page", None)
+    return bool(predicate and predicate(elements))
 
 
 def is_list_page(elements: list[dict]) -> bool:
-    """Recognize a list/table page and explicitly exclude detail/search pages."""
-
-    if is_search_page(elements) or is_stock_detail_page(elements):
-        return False
-    return any(
-        has_id(elements, resource_id)
-        for resource_id in ("table", "ggt_table", "dragable_listview", "dragablelistview")
-    ) or has_label(elements, "返回")
+    predicate = getattr(_active_adapter(), "is_list_page", None)
+    return bool(predicate and predicate(elements))
 
 
 def is_named_list_page(elements: list[dict], labels: Iterable[str]) -> bool:
-    # Home pages reuse the same section labels (for example ``AH股`` and
-    # ``沪、深港通``) as their child lists.  A child list has a dedicated
-    # title bar and back affordance; require both so the page gate cannot be
-    # satisfied by a same-named entry still visible on 港股首页.
-    if not is_list_page(elements):
-        return False
-    if has_label(elements, "返回") and any(has_label(elements, label) for label in labels):
-        return True
-    # In landscape mode the title/return nodes are omitted by some builds,
-    # while the dedicated table header remains stable.  Keep this fallback
-    # scoped to table pages so a quote home cannot satisfy a child-list gate.
-    return has_id(elements, "table") and has_id(elements, "dragable_listview_header")
+    predicate = getattr(_active_adapter(), "is_named_list_page", None)
+    return bool(predicate and predicate(elements, labels))
 
 
 def is_market_home(elements: list[dict], sheet_name: str) -> bool:
-    """Recognize a Sheet home by its content, not by the top-tab state.
-
-    The app keeps the market tabs visible on the Sheet home, so
-    ``is_market_shell`` and a real home page are intentionally allowed to
-    overlap.  港股 therefore requires the dedicated ``ganggu_page`` surface
-    and the top title “港股”.  The home cards 恒生指数、国企指数 and 沪/深港通
-    are useful discovery evidence, but may be above the current scroll
-    position and must not be required to be visible on every row.
-    """
-
-    if (
-        is_search_page(elements)
-        or is_stock_detail_page(elements)
-        or is_list_page(elements)
-        or not (has_title(elements, sheet_name) or (sheet_name == "港股" and has_label(elements, sheet_name)))
-    ):
-        return False
-    if sheet_name == "港股":
-        return (
-            has_id(elements, "title_bar_middle")
-            and has_id(elements, "ganggu_page")
-            and has_id(elements, "titlebar_left_layout")
-        )
-    # All five top-level quote pages expose the same title bar and search
-    # affordance.  Some app builds use ``tips_view`` while others expose the
-    # right-hand icon as ``new_title_search``; the exact title plus the
-    # dedicated page content is the stable contract.
-    return (
-        has_id(elements, "title_bar_middle")
-        and has_id(elements, "titlebar_left_layout")
-        and (
-            has_id(elements, "tips_view")
-            or has_id(elements, "title_bar_right1")
-            or has_id(elements, "new_title_search")
-        )
-    )
+    predicate = getattr(_active_adapter(), "is_market_home", None)
+    return bool(predicate and predicate(elements, sheet_name))
 
 
 def is_fund_flow_tab_page(elements: list[dict], tab_name: str) -> bool:
-    return (
-        is_fund_flow_root(elements)
-        and has_label(elements, tab_name)
-        and not is_search_page(elements)
-        and (selected_label(tab_name) or has_id(elements, "navi_buttonbar"))
-    )
+    predicate = getattr(_active_adapter(), "is_fund_flow_tab_page", None)
+    return bool(predicate and predicate(elements, tab_name))
+
+
+def _legacy_compat_module():
+    loader = getattr(_active_adapter(), "legacy_module", None)
+    if not callable(loader):
+        raise AppAdapterError(
+            f"App {_ACTIVE_APP_CONFIG.slug if _ACTIVE_APP_CONFIG else 'unknown'!r} 未提供 legacy 模块"
+        )
+    module = loader()
+    if module is None:
+        raise AppAdapterError(
+            f"App {_ACTIVE_APP_CONFIG.slug if _ACTIVE_APP_CONFIG else 'unknown'!r} 未提供 legacy 模块"
+        )
+    return module
+
+
+def _legacy_call(name: str, *args, **kwargs):
+    return getattr(_legacy_compat_module(), name)(*args, **kwargs)
 
 
 def _case_text(case: dict, keys: Iterable[str] = ("case_name", "entry", "step_name", "action", "precondition")) -> str:
-    return " ".join(str(case.get(key, "")) for key in keys)
+    return _legacy_call("_case_text", case, keys)
 
 
 def _action_lines(case: dict) -> list[str]:
-    return [line.strip() for line in str(case.get("action", "")).splitlines() if line.strip()]
+    return _legacy_call("_action_lines", case)
 
 
 def _target_orientation(case: dict) -> bool | None:
-    """Infer orientation from the navigation path, then from the precondition.
-
-    A transition row can mention both orientations.  The first operation line
-    describes the page that must exist *before* the row action, so it wins over
-    the later action such as “将手机竖放”.
-    """
-
-    lines = _action_lines(case)
-    path_line = lines[0] if lines else ""
-    if "横屏" in path_line or "横放" in path_line:
-        return True
-    if "竖屏" in path_line or "竖放" in path_line:
-        return False
-    precondition = str(case.get("precondition", ""))
-    if "横屏" in precondition and "竖屏" not in precondition:
-        return True
-    if "竖屏" in precondition and "横屏" not in precondition:
-        return False
-    return None
+    return _legacy_call("_target_orientation", case)
 
 
-def _tap_any_text(
-    events: list[dict],
-    labels: Iterable[str],
-    target: str,
-    *,
-    scroll: bool = False,
-) -> bool:
-    candidates = tuple(label for label in labels if label)
-
-    def on_phase(phase: str) -> None:
-        details = {
-            "current": "先查找当前可见入口",
-            "top": "当前可见区域未找到，先回到页面顶部再查找入口",
-            "bottom": "顶部仍未找到，再向下查找底部入口",
-        }
-        if phase != "current":
-            event(events, "navigate", target, "attempt", details[phase])
-
-    found = search_entry_two_way(
-        candidates,
-        lambda label: tap_text(events, label),
-        restore_top=(
-            lambda: swipe(events, 540, 450, 540, 2050, f"回到{target}所在顶部")
-            if scroll
-            else False
-        ),
-        search_bottom=(
-            lambda: swipe(events, 540, 1950, 540, 800, f"查找{target}")
-            if scroll
-            else False
-        ),
-        on_phase=on_phase,
-    )
-    if found:
-        return True
-    event(events, "navigate", target, "failed", "候选页面入口均未找到")
-    return False
+def _tap_any_text(events: list[dict], labels: Iterable[str], target: str, *, scroll: bool = False) -> bool:
+    return _legacy_call("_tap_any_text", events, labels, target, scroll=scroll)
 
 
-def _tap_section_more(
-    events: list[dict],
-    section_label: str,
-    target: str,
-    *,
-    scroll: bool = True,
-) -> bool:
-    """Tap the ``更多`` control belonging to a named home-page section.
-
-    Several sections expose the same resource id and visible text.  A fixed
-    coordinate therefore risks opening the first section (usually 行业板块)
-    when the row requested AH股/港股主板/港股创业板.  Resolve the section and
-    its nearest right-hand ``更多`` node from the current UI tree instead.
-    """
-
-    def attempt(phase: str) -> bool:
-        elements = screen_elements()
-        labels = [e for e in elements if e.get("text") == section_label or e.get("desc") == section_label]
-        more = [e for e in elements if e.get("id") == "more_tv" or e.get("text") == "更多"]
-        pairs = [
-            (abs(int(m.get("cy", 0)) - int(label.get("cy", 0))), m)
-            for label in labels
-            for m in more
-            if int(m.get("cx", 0)) > int(label.get("cx", 0))
-            and abs(int(m.get("cy", 0)) - int(label.get("cy", 0))) <= 140
-        ]
-        if not pairs:
-            return False
-        _, node = min(pairs, key=lambda item: item[0])
-        return tap_xy(events, int(node["cx"]), int(node["cy"]), f"{section_label}更多")
-
-    if attempt("current"):
-        return True
-    if scroll:
-        event(events, "navigate", target, "attempt", "当前可见区域未找到，先回到页面顶部再查找入口")
-        if swipe(events, 540, 450, 540, 2050, f"回到{target}所在顶部") and attempt("top"):
-            return True
-        event(events, "navigate", target, "attempt", "顶部仍未找到，再向下查找底部入口")
-        if swipe(events, 540, 1950, 540, 800, f"查找{target}") and attempt("bottom"):
-            return True
-    event(events, "navigate", target, "failed", f"未找到“{section_label}”对应的更多按钮")
-    return False
+def _tap_section_more(events: list[dict], section_label: str, target: str, *, scroll: bool = True) -> bool:
+    return _legacy_call("_tap_section_more", events, section_label, target, scroll=scroll)
 
 
 def _open_hk_connect_list(events: list[dict], market: str) -> bool:
-    """Open the 港股通(沪/深) independent list from the shared connect page."""
-
-    suffix = "沪" if market == "沪" else "深"
-    labels = (f"港股通({suffix})", f"港股通（{suffix}）")
-    list_predicate = lambda elements: is_named_list_page(elements, labels)
-    if list_predicate(screen_elements()):
-        return True
-    connect_predicate = lambda elements: is_named_list_page(elements, ("沪、深港通", "沪深港通"))
-    if not connect_predicate(screen_elements()):
-        if not tap_xy(events, 900, 462, "沪、深港通"):
-            return False
-        if not wait_for_page(connect_predicate, "沪、深港通列表页"):
-            return False
-    if not _tap_section_more(events, f"港股通({suffix})", f"港股通({suffix})列表页", scroll=True):
-        # Some builds expose full-width punctuation in the section label.
-        if not _tap_section_more(events, f"港股通（{suffix}）", f"港股通({suffix})列表页", scroll=True):
-            return False
-    return wait_for_page(list_predicate, f"港股通({suffix})列表页")
+    return _legacy_call("_open_hk_connect_list", events, market)
 
 
-def _open_category_list(
-    events: list[dict], sheet_name: str, category: tuple[str, tuple[str, ...], tuple[str, ...]]
-) -> bool:
-    """Open a named child list from a quote home."""
-
-    description, labels, entries = category
-    section = next(
-        (
-            label
-            for label in labels
-            if label
-            in {
-                "国内指数",
-                "股指期货",
-                "其他指数",
-                "行业板块",
-                "概念板块",
-                "涨幅榜",
-                "跌幅榜",
-                "快速涨幅",
-                "换手率",
-                "量比",
-                "成交额",
-                "AH股",
-            }
-        ),
-        None,
-    )
-    if section and _tap_section_more(events, section, description, scroll=True):
-        return True
-    return _tap_any_text(events, entries, description, scroll=True)
+def _open_category_list(events: list[dict], sheet_name: str, category) -> bool:
+    return _legacy_call("_open_category_list", events, sheet_name, category)
 
 
-def _category_info(text: str) -> tuple[str, tuple[str, ...], tuple[str, ...]] | None:
-    """Return (description, page-title labels, entry labels) for a route hint."""
-
-    # 股指 has three independent sections on its home page.  Their child
-    # pages use the section name as the title and expose the shared table
-    # contract, so these entries can use the same list/detail/search flow as
-    # the market lists below.
-    if "国内指数" in text or "国内股指" in text:
-        return "国内指数列表页", ("国内指数",), ("国内指数",)
-    if "股指期货" in text:
-        return "股指期货列表页", ("股指期货",), ("股指期货",)
-    if "其他指数" in text:
-        return "其他指数列表页", ("其他指数",), ("其他指数",)
-
-    # 沪深京's expandable ranking sections and AH list are independent child
-    # pages.  Keep the labels broad enough for builds that append a suffix.
-    for ranking in ("涨幅榜", "跌幅榜", "快速涨幅", "换手率", "量比", "成交额"):
-        if ranking in text:
-            return f"{ranking}列表页", (ranking,), (ranking,)
-    if "AH股列表" in text:
-        return "AH股列表页", ("AH股列表", "AH股"), ("AH股列表", "AH股")
-
-    # 板块's two lists use the same section-more affordance as the other
-    # quote homes.  Concept/industry wording varies slightly by workbook
-    # generation, hence the aliases.
-    if "概念板块" in text:
-        return "概念板块列表页", ("概念板块", "概念"), ("概念板块", "概念")
-    if "港股通（沪）" in text or "港股通(沪)" in text:
-        return "港股通(沪)列表页", ("港股通(沪)", "港股通（沪）"), ("港股通(沪)", "港股通（沪）")
-    if "港股通（深）" in text or "港股通(深)" in text:
-        return "港股通(深)列表页", ("港股通(深)", "港股通（深）"), ("港股通(深)", "港股通（深）")
-    if "沪、深港通" in text or "沪深港通" in text:
-        return "沪、深港通列表页", ("沪、深港通", "沪深港通"), ("沪、深港通", "沪深港通")
-    if "行业板块" in text:
-        return "行业板块列表页", ("行业板块", "行业"), ("行业板块", "行业")
-    if "AH股" in text:
-        return "AH股比价列表页", ("AH股比价", "AH股"), ("AH股更多", "AH股")
-    if "港股创业板" in text:
-        return "港股创业板列表页", ("港股创业板",), ("港股创业板",)
-    if "港股主板" in text:
-        return "港股主板列表页", ("港股主板",), ("港股主板",)
-    if "全球市场-港股" in text:
-        return "全球市场港股列表页", ("港股", "全球市场-港股"), ("港股",)
-    if "全球市场-国内期货" in text:
-        return "国内期货列表页", ("国内期货",), ("国内期货",)
-    if "全球市场-外汇" in text:
-        return "外汇列表页", ("外汇",), ("外汇",)
-    if "沪深封闭基金" in text:
-        return "沪深封闭基金列表页", ("±20%基金", "沪深封闭基金"), ("沪深封闭基金",)
-    if "沪深国债逆回购" in text:
-        return "沪深国债逆回购列表页", ("沪深债券", "沪深国债逆回购"), ("沪深国债逆回购", "沪深债券")
-    if "沪深债券" in text or "深证债券" in text or "上证债券" in text:
-        return "沪深债券列表页", ("沪深债券", "深证债券", "上证债券"), ("沪深债券",)
-    if "上证A股" in text:
-        return "上证A股列表页", ("上证A股",), ("上证A股",)
-    return None
+def _category_info(text: str):
+    return _legacy_call("_category_info", text)
 
 
 def _direct_navigation_action(case: dict) -> bool:
-    """Whether the row's own action is the category-entry tap.
-
-    In that case the target page is the module home.  The category click is
-    performed by ``execute_action`` and must not be repeated in setup.
-    """
-
-    lines = _action_lines(case)
-    body = " ".join(lines[1:])
-    # These rows start on 港股首页 and use the section's ``更多`` control as
-    # the row action.  Their pre-action page is therefore the home page; the
-    # corresponding list page is verified after the action by the reviewer.
-    if any(
-        phrase in body
-        for phrase in (
-            "点击港股通（沪）更多",
-            "点击港股通（深）更多",
-            "点击AH股列表的更多",
-            "点击港股创业板更多",
-            "点击港股主板更多",
-        )
-    ):
-        return True
-    if "点击更多按钮" in body and any(
-        phrase in _case_text(case)
-        for phrase in ("港股创业板", "港股主板")
-    ):
-        return True
-    if any(
-        phrase in body
-        for phrase in (
-            "点击沪、深港通",
-            "点击沪深封闭基金",
-            "点击上证A股/上证B股",
-            "点击深证债券/上证债券",
-            "点击沪深债券",
-            "切换到“沪深京”tab",
-            "切换到“行业”tab",
-            "切换到“概念”tab",
-            "点击更多按钮",
-            "点击国内指数模块",
-            "点击股指期货介绍",
-            "点击概念主力净流入",
-            "点击行业主力净流入",
-        )
-    ):
-        return True
-    # Do not confuse a category-entry tap with a tap on a stock row whose
-    # label merely starts with the same words (港股通/港股主板列表/AH股列表).
-    if any(phrase in body for phrase in ("点击AH股", "点击港股创业板", "点击港股主板", "点击港股")):
-        return not any(phrase in body for phrase in ("列表", "任意一只", "任意个股", "股票"))
-    return any(phrase in body for phrase in ("点击国内期货", "点击外汇"))
+    return _legacy_call("_direct_navigation_action", case)
 
 
 def _target_is_search(case: dict) -> bool:
-    lines = _action_lines(case)
-    body = " ".join(lines[1:])
-    return "搜索" in _case_text(case) and any(
-        phrase in body for phrase in ("返回", "取消", "退出")
-    )
+    return _legacy_call("_target_is_search", case)
 
 
 def _target_is_detail(case: dict) -> bool:
-    text = _case_text(case, ("entry", "step_name", "action", "precondition"))
-    if any(phrase in text for phrase in ("个股详情", "详情页", "详情界面")):
-        return not _target_is_search(case)
-    # Some sheets put the expected source page only in the case name.  Do
-    # not treat “跳转个股详情” rows as already being on detail: those rows
-    # click a list item.  A close/back/order action, however, requires detail
-    # as the pre-action page.
-    name = str(case.get("case_name", ""))
-    body = " ".join(_action_lines(case)[1:])
-    if any(phrase in name for phrase in ("个股详情", "详情页", "详情界面")):
-        return not any(phrase in body for phrase in ("列表中任意", "任意个股", "任意一只", "点击一只"))
-    return False
-
-
-def _with_orientation(
-    description: str,
-    base_predicate: Callable[[list[dict]], bool],
-    navigate: Callable[[list[dict]], bool],
-    landscape: bool | None,
-) -> PageContract:
-    def predicate(elements: list[dict]) -> bool:
-        return base_predicate(elements) and (
-            landscape is None or orientation_matches(landscape)
-        )
-
-    def navigate_with_orientation(events: list[dict]) -> bool:
-        if not base_predicate(screen_elements()):
-            if not navigate(events):
-                return False
-            if not wait_for_page(base_predicate, description):
-                return False
-        if landscape is not None and not orientation_matches(landscape):
-            if not rotate(events, landscape):
-                return False
-            return wait_for_orientation(landscape)
-        return True
-
-    return PageContract(description, predicate, navigate_with_orientation)
+    return _legacy_call("_target_is_detail", case)
 
 
 def target_page_contract(sheet_name: str, row: int, case: dict) -> PageContract:
-    """Build the row's pre-action page contract from the module plan.
-
-    The contract deliberately describes the page before the current row's
-    business action.  For example, row 33's “点击表头字段” requires the
-    上证A股 list, while a row whose action is “点击上证A股” requires the 其他
-    module home.
-    """
-
-    text = _case_text(case)
-    path_text = " ".join(_action_lines(case)[:1])
-    category = _category_info(text)
-    landscape = _target_orientation(case)
-    lines = _action_lines(case)
-
-    if row == 2:
-        # 港股/其他 and 看资金 begin with a top-level tab/entry transition.
-        # The other three quote sheets start from their own home because the
-        # first row already exercises a child action there.
-        action_text = " ".join(_action_lines(case))
-        if sheet_name in {"港股", "其他", "看资金"} and (
-            "tab" in action_text or "左上角" in action_text or "看资金" in action_text
-        ):
-            return _with_orientation("行情模块根页面", is_market_shell, lambda events: True, landscape)
-        if sheet_name == "板块" and "关闭" in action_text and "搜索" in action_text:
-            return _with_orientation(
-                "股票搜索页",
-                is_search_page,
-                lambda events: tap_xy(events, 1005, 156, "板块首页搜索入口"),
-                landscape,
-            )
-        if sheet_name in TOP_QUOTE_SHEETS:
-            return _with_orientation(
-                f"{sheet_name}模块首页",
-                lambda elements: is_market_home(elements, sheet_name),
-                lambda events: True,
-                landscape,
-            )
-        return _with_orientation("行情模块根页面", is_market_shell, lambda events: True, landscape)
-
-    if sheet_name == "看资金" and _target_is_search(case):
-        # Search-return rows start from the search page.  The search page is
-        # reached from the already-reset fund-flow root (or its named tab),
-        # and the row's own cancel/back operation runs only after this guard.
-        tabs = ("自选", "沪深京", "行业", "概念")
-        fund_tab = next((tab for tab in tabs if tab in path_text), None)
-        context_predicate = (
-            (lambda elements: is_fund_flow_tab_page(elements, fund_tab))
-            if fund_tab
-            else is_fund_flow_root
+    handler = getattr(_active_adapter(), "legacy_target_page_contract", None)
+    if not callable(handler):
+        raise AppAdapterError(
+            f"App {_ACTIVE_APP_CONFIG.slug if _ACTIVE_APP_CONFIG else 'unknown'!r} 未提供 legacy 页面契约"
         )
-
-        def open_fund_search(events: list[dict]) -> bool:
-            if fund_tab and not context_predicate(screen_elements()):
-                if not tap_fund_tab(events, fund_tab):
-                    return False
-                if not wait_for_page(context_predicate, f"看资金-{fund_tab}列表页"):
-                    return False
-            if tap_text(events, "股票搜索"):
-                return True
-            if tap_id(events, "search_icon_iv"):
-                return True
-            return tap_xy(events, 985, 156, "右上角搜索（语义入口重试）")
-
-        return _with_orientation("股票搜索页", is_search_page, open_fund_search, landscape)
-
-    if sheet_name == "看资金" and _target_is_detail(case):
-        tabs = ("自选", "沪深京", "行业", "概念")
-        fund_tab = next((tab for tab in tabs if tab in path_text), None)
-        context_predicate = (
-            (lambda elements: is_fund_flow_tab_page(elements, fund_tab))
-            if fund_tab
-            else is_fund_flow_root
-        )
-
-        def open_fund_detail(events: list[dict]) -> bool:
-            if fund_tab and not context_predicate(screen_elements()):
-                if not tap_fund_tab(events, fund_tab):
-                    return False
-                if not wait_for_page(context_predicate, f"看资金-{fund_tab}列表页"):
-                    return False
-            if not first_list_item(events):
-                return False
-            return wait_for_page(is_stock_detail_page, "个股详情页")
-
-        return _with_orientation("个股详情页", is_stock_detail_page, open_fund_detail, landscape)
-
-    if sheet_name in TOP_QUOTE_SHEETS:
-        if _target_is_search(case):
-            category_for_search = _category_info(path_text or text)
-
-            def open_search(events: list[dict]) -> bool:
-                if category_for_search:
-                    _, labels, entries = category_for_search
-                    list_predicate = lambda elements: is_named_list_page(elements, labels)
-                    if not list_predicate(screen_elements()):
-                        if category_for_search[0].startswith("港股通("):
-                            opened = _open_hk_connect_list(
-                                events,
-                                "沪" if "沪" in category_for_search[0] else "深",
-                            )
-                        elif "AH股" in category_for_search[0]:
-                            opened = _tap_section_more(events, "AH股", category_for_search[0])
-                        elif "港股创业板" in category_for_search[0]:
-                            opened = _tap_section_more(events, "港股创业板", category_for_search[0])
-                        elif "港股主板" in category_for_search[0]:
-                            opened = _tap_section_more(events, "港股主板", category_for_search[0])
-                        else:
-                            opened = _open_category_list(events, sheet_name, category_for_search)
-                        if not opened:
-                            return False
-                        if not wait_for_page(list_predicate, category_for_search[0]):
-                            return False
-                if tap_text(events, "股票搜索"):
-                    return True
-                if tap_id(events, "search_icon_iv"):
-                    return True
-                return tap_xy(events, 985, 156, "右上角搜索（语义入口重试）")
-
-            return _with_orientation("股票搜索页", is_search_page, open_search, landscape)
-
-        if _target_is_detail(case):
-            category_for_detail = _category_info(path_text or text)
-
-            def open_detail(events: list[dict]) -> bool:
-                if not category_for_detail:
-                    return False
-                _, labels, entries = category_for_detail
-                list_predicate = lambda elements: is_named_list_page(elements, labels)
-                if not list_predicate(screen_elements()):
-                    if category_for_detail[0].startswith("港股通("):
-                        opened = _open_hk_connect_list(
-                            events,
-                            "沪" if "沪" in category_for_detail[0] else "深",
-                        )
-                    elif "AH股" in category_for_detail[0]:
-                        opened = _tap_section_more(events, "AH股", category_for_detail[0])
-                    elif "港股创业板" in category_for_detail[0]:
-                        opened = _tap_section_more(events, "港股创业板", category_for_detail[0])
-                    elif "港股主板" in category_for_detail[0]:
-                        opened = _tap_section_more(events, "港股主板", category_for_detail[0])
-                    else:
-                        opened = _open_category_list(events, sheet_name, category_for_detail)
-                    if not opened:
-                        return False
-                    if not wait_for_page(list_predicate, category_for_detail[0]):
-                        return False
-                if not first_list_item(events):
-                    return False
-                return wait_for_page(is_stock_detail_page, "个股详情页")
-
-            return _with_orientation("个股详情页", is_stock_detail_page, open_detail, landscape)
-
-        if _direct_navigation_action(case):
-            return _with_orientation(
-                f"{sheet_name}模块首页",
-                lambda elements: is_market_home(elements, sheet_name),
-                lambda events: True,
-                landscape,
-            )
-
-        if sheet_name == "港股" and "港股主界面" in text:
-            return _with_orientation(
-                "港股模块首页",
-                lambda elements: is_market_home(elements, sheet_name),
-                lambda events: True,
-                landscape,
-            )
-
-        if category:
-            description, labels, entries = category
-            if description.startswith("港股通("):
-                market = "沪" if "沪" in description else "深"
-                return _with_orientation(
-                    description,
-                    lambda elements: is_named_list_page(elements, labels),
-                    lambda events: _open_hk_connect_list(events, market),
-                    landscape,
-                )
-            return _with_orientation(
-                description,
-                lambda elements: is_named_list_page(elements, labels),
-                lambda events: _open_category_list(events, sheet_name, category),
-                landscape,
-            )
-
-        return _with_orientation(
-            f"{sheet_name}模块首页",
-            lambda elements: is_market_home(elements, sheet_name),
-            lambda events: True,
-            landscape,
-        )
-
-    # 看资金 uses a tab page as the precondition only when the tab is not the
-    # row's own transition action.  Otherwise the module root is the target.
-    tabs = ("自选", "沪深京", "行业", "概念")
-    tab_name = next((tab for tab in tabs if tab in path_text), None)
-    if tab_name and not _direct_navigation_action(case):
-        return _with_orientation(
-            f"看资金-{tab_name}列表页",
-            lambda elements: is_fund_flow_tab_page(elements, tab_name),
-            lambda events: tap_fund_tab(events, tab_name),
-            landscape,
-        )
-    return _with_orientation("看资金模块根页面", is_fund_flow_root, lambda events: True, landscape)
+    return handler(sheet_name, row, case)
 
 
 def ensure_target_page(events: list[dict], contract: PageContract) -> bool:
@@ -920,105 +599,31 @@ def ensure_target_page(events: list[dict], contract: PageContract) -> bool:
 
 
 def tap_market_tab(events: list[dict], sheet_name: str) -> bool:
-    """Select a market sheet and verify that its tab became selected."""
+    """Compatibility wrapper; market-tab geometry belongs to the adapter."""
 
-    coords = MARKET_TABS
-    x, y = coords[sheet_name]
-    if selected_label(sheet_name):
-        event(events, "assert", f"顶部{sheet_name}", "success", "目标 Tab 已处于选中状态")
-        return True
-    for attempt in range(MAX_ACTION_RETRIES + 1):
-        if attempt:
-            event(events, "retry", f"顶部{sheet_name}", "attempt", "Tab 选中状态未确认，重试一次")
-        if not tap_xy(events, x, y, f"顶部{sheet_name}"):
-            continue
-        if wait_for_selected(sheet_name):
-            event(events, "assert", f"顶部{sheet_name}", "success", "目标 Tab 已选中")
-            return True
-    event(events, "assert", f"顶部{sheet_name}", "failed", "点击命令已发送，但目标 Tab 未进入选中状态")
-    return False
+    return _active_adapter().tap_market_tab(events, sheet_name)
 
 
 def tap_fund_tab(events: list[dict], tab_name: str) -> bool:
-    """Tap a 看资金 sub-tab without colliding with the bottom 自选 bar."""
+    """Compatibility wrapper; 看资金 tab geometry belongs to the adapter."""
 
-    coords = {"自选": (135, 288), "沪深京": (405, 288), "行业": (675, 288), "概念": (945, 288)}
-    if tab_name not in coords:
-        return tap_text(events, tab_name)
-    x, y = coords[tab_name]
-    return tap_xy(events, x, y, f"看资金-{tab_name}tab")
+    return _active_adapter().tap_fund_tab(events, tab_name)
 
 
 def enter_market_home(events: list[dict], sheet_name: str) -> bool:
-    """Enter the selected market Sheet home, not just select its Tab.
+    """Compatibility wrapper; module entry belongs to the adapter."""
 
-    A soft reset normally lands on the market shell.  Its selected flag can
-    still say “港股”/“其他”, so ``tap_market_tab`` alone is not a sufficient
-    page assertion.  The home-page contract must be confirmed before a row
-    action is allowed to run.
-    """
-
-    home_predicate = lambda elements: is_market_home(elements, sheet_name)
-    if home_predicate(screen_elements()):
-        event(events, "assert", f"{sheet_name}模块首页", "success", "目标 Sheet 首页已处于前台")
-        return True
-
-    coords = MARKET_TABS
-    for attempt in range(MAX_ACTION_RETRIES + 1):
-        if attempt:
-            event(events, "retry", f"{sheet_name}模块首页", "attempt", "Tab 已选中但首页未确认，重新进入首页")
-        # The home title and the top Tab share the same visible text.  A
-        # text-only lookup can hit the title bar (as happened on 港股), so
-        # use the known top-tab geometry first and verify the home contract.
-        x, y = coords[sheet_name]
-        if tap_xy(events, x, y, f"顶部{sheet_name}（首页重试）") and wait_for_page(
-            home_predicate, f"{sheet_name}模块首页"
-        ):
-            event(events, "assert", f"{sheet_name}模块首页", "success", "顶部 Tab 入口后首页复核通过")
-            return True
-        if tap_text(events, sheet_name) and wait_for_page(home_predicate, f"{sheet_name}模块首页"):
-            event(events, "assert", f"{sheet_name}模块首页", "success", "语义入口后首页复核通过")
-            return True
-    event(events, "assert", f"{sheet_name}模块首页", "failed", "Tab 选中但无法确认已进入 Sheet 首页")
-    return False
+    return _active_adapter().enter_market_home(events, sheet_name)
 
 
 def module_root_visible(sheet_name: str, elements: list[dict]) -> bool:
-    if sheet_name in TOP_QUOTE_SHEETS:
-        return is_market_shell(elements)
-    return is_fund_flow_root(elements)
+    return _active_adapter().is_module_root(sheet_name, elements)
 
 
 def soft_reset_to_module_root(events: list[dict], sheet_name: str) -> bool:
-    """Restore a module root without killing the app for every row."""
+    """Compatibility wrapper; reset policy belongs to the adapter."""
 
-    elements = screen_elements()
-    if module_root_visible(sheet_name, elements):
-        return True
-
-    # If the current screen is the market shell, 看资金 is one direct entry
-    # away; pressing BACK here would leave the app instead of restoring it.
-    if sheet_name == "看资金" and is_market_shell(elements):
-        if tap_xy(events, 94, 156, "看资金入口（软复位）"):
-            return wait_for_page(is_fund_flow_root, "看资金根页面")
-        return False
-
-    for attempt in range(MAX_SOFT_BACK):
-        if not key_back(events):
-            return False
-        elements = screen_elements()
-        if module_root_visible(sheet_name, elements):
-            event(events, "reset", f"{sheet_name}模块根页面", "success", f"返回次数={attempt + 1}")
-            return True
-
-    # A home screen can be recovered without a process restart as well.
-    if has_label(elements, "行情"):
-        if tap_text(events, "行情") and wait_for_page(is_market_shell, "行情根页面"):
-            if sheet_name in TOP_QUOTE_SHEETS:
-                return True
-            if tap_xy(events, 94, 156, "看资金入口（软复位）"):
-                return wait_for_page(is_fund_flow_root, "看资金根页面")
-    return False
+    return _active_adapter().soft_reset_to_module_root(events, sheet_name)
 
 
 def ensure_module_state(events: list[dict], sheet_name: str, session: ModuleSession) -> bool:
@@ -1090,7 +695,8 @@ def ensure_page_group_state(
 
 def session_snapshot(session: ModuleSession) -> dict[str, int | str | None]:
     return {
-        "policy": "module_cold_start_page_group_reuse_row_execution",
+        "policy": "adapter_module_cold_start_page_group_reuse_row_execution",
+        "adapter": _active_adapter().name,
         "active_sheet": session.active_sheet,
         "active_page_group_id": session.active_page_group_id,
         "active_page_group_key": session.active_page_group_key,
@@ -1099,6 +705,9 @@ def session_snapshot(session: ModuleSession) -> dict[str, int | str | None]:
         "recovery_restart_count": session.recovery_restart_count,
         "page_group_reuse_count": session.page_group_reuse_count,
         "runtime_replan_count": session.runtime_replan_count,
+        "agent_recovery_count": session.agent_recovery_count,
+        "agent_recovery_success_count": session.agent_recovery_success_count,
+        "agent_recovery_failure_count": session.agent_recovery_failure_count,
     }
 
 
@@ -1164,20 +773,30 @@ def _action_step(event_item: dict) -> str | None:
         return f"尝试点击“{target}”，执行结果：{result or '未知'}"
     if kind == "swipe":
         return f"滑动页面（{target}）"
+    if kind == "type":
+        return "向输入框输入 Agent 计划指定的值"
     if kind == "key":
         return f"按下按键“{target}”"
+    if kind == "wait":
+        return f"等待页面稳定（{target}）"
     if kind == "orientation":
         return f"调整屏幕方向为“{target}”"
     if kind == "observe":
         return "采集当前页面状态"
     if kind == "executor":
         return f"执行器报告异常：{detail or target or result}"
+    if kind == "interrupt":
+        return f"检测到运行时覆盖层“{detail or target or result}”"
+    if kind == "agent_recovery":
+        return f"Agent 异常恢复：{detail or target or result}"
     if kind == "retry":
         return f"对“{target}”进行一次受限重试"
     if kind == "assert":
         return f"校验页面状态“{target}”：{detail or result}"
     if kind == "navigate":
         return f"执行公共导航“{target}”：{detail or result}"
+    if kind == "probe":
+        return f"导航探测“{target}”：{detail or result}"
     if kind == "launch":
         return "启动测试 App"
     if kind == "reset":
@@ -1192,6 +811,8 @@ def build_actual(
     setup_ok: bool,
     action_ok: bool,
     error_detail: str = "",
+    judgment_status: str,
+    judgment_reason: str,
 ) -> str:
     """Build the readable actual result shown in the Excel report.
 
@@ -1215,7 +836,47 @@ def build_actual(
     lines.extend(f"{index}. {step}" for index, step in enumerate(steps, start=1))
     lines.append("操作结果：")
     lines.append(_readable_page_result(elements))
-    return "\n".join(lines)
+    return append_judgment_reason(
+        "\n".join(lines),
+        judgment_status,
+        judgment_reason,
+    )
+
+
+def executor_judgment_reason(
+    status: str,
+    *,
+    setup_ok: bool,
+    action_ok: bool,
+    shot_ok: bool,
+    action_mode: str,
+    error_detail: str = "",
+    blocked_reason: str = "",
+    probe: bool = False,
+    agent_plan: bool = False,
+) -> str:
+    """Create a grounded reason for the executor's preliminary verdict."""
+
+    if status == "⛔阻塞":
+        return blocked_reason or error_detail or "目标页、动作或独立证据门禁未完成"
+    if probe or action_mode == "probe":
+        return "目标页门禁和独立截图均已完成；本次未执行业务动作，仅证明导航可达"
+    if agent_plan:
+        return (
+            "当前 Agent 已将本行 Excel 内容解析为结构化动作并完成设备执行，"
+            "已采集执行后页面和独立截图；最终通过/不通过必须由当前 Agent 依据本行截图、"
+            "页面观察、实际动作和预期结果逐行复核，当前不自动判定为通过"
+        )
+    if status == "🟡待验证" and action_mode == "observe":
+        return "该行是显式观察步骤，已采集执行后页面事实和独立截图，但仍需按预期条件完成语义确认"
+    if status == "⚠️部分通过":
+        return "已完成目标页校验、业务动作和独立截图，但缺少外部基准或所需交易时段，无法完成全部预期核对"
+    if status == "✅通过":
+        return "目标页门禁通过，动作执行完成且独立截图已生成；本轮执行门禁未发现失败，预期结果仍以逐行复核结论为准"
+    return (
+        f"执行条件：目标页={setup_ok}，动作={action_ok}，独立截图={shot_ok}；"
+        f"{error_detail or '未形成可判定的终态'}"
+    )
 
 
 def setup_sheet(
@@ -1227,320 +888,901 @@ def setup_sheet(
     page_group_id: str | None = None,
     page_group_key: str | None = None,
 ) -> bool:
-    """Prepare one row with bounded page-group navigation reuse.
-
-    The order here is intentionally fixed and shared by every Sheet:
-
-    ``enter/reuse page group -> check target page -> navigate if needed ->
-    re-check target page``.  Only a successful target-page assertion allows
-    ``execute_action`` to run.  If a reused page is no longer usable, perform
-    one bounded runtime replan from the module root before blocking.
-    """
-
-    group_id = page_group_id or str(case.get("page_group_id") or f"{sheet_name}-ungrouped")
-    group_key = page_group_key or str(case.get("page_group_key") or sheet_name)
-    same_group = (
-        session.active_sheet == sheet_name
-        and session.active_page_group_id == group_id
-        and session.active_page_group_key == group_key
-    )
-    ok = ensure_page_group_state(events, sheet_name, group_id, group_key, session)
-    if not ok:
-        return False
-
-    top_tab_transition = (
-        row == 2
-        and sheet_name in {"港股", "其他"}
-        and "tab" in " ".join(_action_lines(case)).casefold()
-    )
-    if not same_group and sheet_name in TOP_QUOTE_SHEETS and not top_tab_transition:
-        # Row 2 is the Sheet-switching action itself.  All later rows use the
-        # selected Sheet as their public module entry point.  This is done
-        # once when a page group starts; rows in the same group reuse it.
-        if row != 2:
-            ok = enter_market_home(events, sheet_name) and ok
-    elif not same_group and row != 2 and sheet_name == "看资金" and not is_fund_flow_root(screen_elements()):
-        # The first row of 看资金 must still enter the module before its
-        # target-page contract is checked.  Rows in the same page group reuse
-        # the group page and therefore do not repeat this tap.
-        entered = tap_text(events, "看资金")
-        if not entered:
-            entered = tap_xy(events, 94, 156, "看资金入口（语义入口重试）")
-        ok = entered and wait_for_page(is_fund_flow_root, "看资金根页面") and ok
-    if not ok:
-        return False
-
-    contract = target_page_contract(sheet_name, row, case)
-    if ensure_target_page(events, contract):
-        return True
-
-    # A page-group plan is advisory.  A failed target-page check must get one
-    # bounded runtime replan from a clean module root before the row is
-    # blocked.  This prevents a stale/incorrect plan from blocking a row that
-    # is still reachable, while keeping the business action behind the gate.
-    session.runtime_replan_count += 1
-    event(
+    handler = getattr(_active_adapter(), "legacy_setup_sheet", None)
+    if not callable(handler):
+        raise AppAdapterError(
+            f"App {_ACTIVE_APP_CONFIG.slug if _ACTIVE_APP_CONFIG else 'unknown'!r} 未提供 legacy setup"
+        )
+    return bool(handler(
         events,
-        "replan",
-        group_id,
-        "attempt",
-        "页面组复用后的目标页校验失败，恢复模块根页面并重新规划本行导航",
-    )
-    if not ensure_module_state(events, sheet_name, session):
-        event(events, "replan", group_id, "failed", "运行时重新规划前的模块复位失败")
-        return False
-    if sheet_name in TOP_QUOTE_SHEETS and not top_tab_transition:
-        if not enter_market_home(events, sheet_name):
-            event(events, "replan", group_id, "failed", "运行时重新规划后的模块入口失败")
-            return False
-    elif sheet_name == "看资金" and row != 2 and not is_fund_flow_root(screen_elements()):
-        entered = tap_text(events, "看资金") or tap_xy(events, 94, 156, "看资金入口（运行时重规划）")
-        if not entered or not wait_for_page(is_fund_flow_root, "看资金根页面（运行时重规划）"):
-            event(events, "replan", group_id, "failed", "运行时重新规划后的看资金入口失败")
-            return False
-    if ensure_target_page(events, contract):
-        event(events, "replan", group_id, "success", "运行时重新规划后目标页校验通过")
-        return True
-    event(events, "replan", group_id, "failed", "运行时重新规划后目标页仍未通过")
-    return False
+        sheet_name,
+        row,
+        case,
+        session,
+        page_group_id=page_group_id,
+        page_group_key=page_group_key,
+    ))
 
 
 def first_list_item(events: list[dict]) -> bool:
     return tap_xy(events, 540, 1000, "第一条列表记录")
 
 
-def _restore_market_home_for_entry(events: list[dict], sheet_name: str) -> bool:
-    """Restore a market Sheet home before each multi-entry sub-action."""
-
-    if is_market_home(screen_elements(), sheet_name):
-        return True
-    if not soft_reset_to_module_root(events, sheet_name):
+def _page_value_matches(elements: list[dict], value: str, *, resource_id: bool = False) -> bool:
+    expected = str(value).strip()
+    if not expected:
         return False
-    return enter_market_home(events, sheet_name)
+    if resource_id:
+        return any(
+            expected == str(element.get("id") or "")
+            or expected == str(element.get("id") or "").split("/")[-1]
+            for element in elements
+        )
+    return any(
+        expected == str(element.get("text") or "").strip()
+        or expected == str(element.get("desc") or "").strip()
+        or expected in str(element.get("text") or "")
+        or expected in str(element.get("desc") or "")
+        for element in elements
+    )
 
 
-def _verify_market_entry(label: str) -> bool:
-    category = _category_info(label)
-    labels = category[1] if category else (label,)
-    description = category[0] if category else f"{label}列表页"
-    return wait_for_page(lambda elements: is_named_list_page(elements, labels), description)
+def agent_target_match(target_page: dict, elements: list[dict]) -> tuple[bool, str]:
+    """Evaluate only the observable, low-level page contract in an Agent plan."""
+
+    missing: list[str] = []
+    present_forbidden: list[str] = []
+    for value in target_page.get("all_text") or []:
+        if not _page_value_matches(elements, value):
+            missing.append(f"文字:{value}")
+    any_text = target_page.get("any_text") or []
+    if any_text and not any(_page_value_matches(elements, value) for value in any_text):
+        missing.append("任一文字:" + "/".join(str(value) for value in any_text))
+    for value in target_page.get("all_ids") or []:
+        if not _page_value_matches(elements, value, resource_id=True):
+            missing.append(f"id:{value}")
+    any_ids = target_page.get("any_ids") or []
+    if any_ids and not any(_page_value_matches(elements, value, resource_id=True) for value in any_ids):
+        missing.append("任一id:" + "/".join(str(value) for value in any_ids))
+    for value in target_page.get("not_text") or []:
+        if _page_value_matches(elements, value):
+            present_forbidden.append(f"文字:{value}")
+    for value in target_page.get("not_ids") or []:
+        if _page_value_matches(elements, value, resource_id=True):
+            present_forbidden.append(f"id:{value}")
+
+    for value in target_page.get("selected_text") or []:
+        if not selected_label(str(value)):
+            missing.append(f"选中文字:{value}")
+    if target_page.get("selected_ids"):
+        try:
+            root = ET.fromstring(droid.dump_xml())
+            selected_ids = {
+                (node.attrib.get("resource-id") or "").split("/")[-1]
+                for node in root.iter("node")
+                if node.attrib.get("selected") == "true"
+                and node.attrib.get("resource-id")
+            }
+        except Exception:
+            selected_ids = set()
+        for value in target_page.get("selected_ids") or []:
+            expected = str(value).split("/")[-1]
+            if expected not in selected_ids:
+                missing.append(f"选中id:{value}")
+
+    orientation = str(target_page.get("orientation") or "").casefold()
+    if orientation:
+        expected_landscape = orientation == "landscape"
+        if not orientation_matches(expected_landscape):
+            missing.append(f"方向:{'横屏' if expected_landscape else '竖屏'}")
+
+    if missing or present_forbidden:
+        details = []
+        if missing:
+            details.append("缺少 " + "、".join(missing))
+        if present_forbidden:
+            details.append("不应出现 " + "、".join(present_forbidden))
+        return False, "；".join(details)
+    return True, "；".join(
+        item
+        for item in (
+            f"目标页={target_page.get('description') or 'Agent 目标页'}",
+            "UI 条件已满足",
+        )
+        if item
+    )
+
+
+def wait_for_agent_target(events: list[dict], target_page: dict, *, phase: str) -> bool:
+    """Poll and record an Agent-authored target-page gate."""
+
+    description = str(target_page.get("description") or "Agent 计划目标页")
+    last_detail = "未获取到页面观察"
+    for attempt in range(PAGE_READY_RETRIES):
+        elements = screen_elements()
+        ok, detail = agent_target_match(target_page, elements)
+        last_detail = detail
+        if ok:
+            event(events, "assert", description, "success", f"{phase}：{detail}")
+            return True
+        if attempt < PAGE_READY_RETRIES - 1:
+            wait_short(0.35)
+    event(events, "assert", description, "failed", f"{phase}：{last_detail}")
+    return False
+
+
+def execute_agent_actions(
+    events: list[dict],
+    actions: list[dict],
+    *,
+    phase: str,
+    progress: dict[str, Any] | None = None,
+    interruption_detector: Callable[[list[dict]], str] | None = None,
+) -> tuple[bool, str, str]:
+    """Execute only validated low-level actions authored by an Agent.
+
+    This function intentionally has no Excel-text parser and no fallback
+    branch.  If the Agent did not provide an action, the caller receives a
+    blocked result instead of an inferred tap or an observe-only pass.
+    """
+
+    if not actions:
+        detail = f"Agent {phase}动作列表为空；执行器未从 Excel 原文推断动作"
+        event(events, "executor", phase, "failed", detail)
+        return False, detail, "agent"
+
+    observed = False
+    for index, spec in enumerate(actions, start=1):
+        action_type = str(spec.get("type") or "")
+        target = str(
+            spec.get("target")
+            or spec.get("text")
+            or spec.get("id")
+            or f"{action_type}#{index}"
+        )
+        if progress is not None:
+            progress.update(
+                {
+                    "last_action_index": index,
+                    "last_action_type": action_type,
+                    "last_action_target": target,
+                    "failed_index": None,
+                    "failure_stage": "",
+                    "retry_safe": False,
+                }
+            )
+        if interruption_detector is not None:
+            overlay_detail = interruption_detector(screen_elements())
+            if overlay_detail:
+                event(events, "interrupt", target, "detected", overlay_detail)
+                if progress is not None:
+                    progress.update(
+                        {
+                            "failed_index": index,
+                            "failure_stage": "before_action",
+                            "retry_safe": True,
+                        }
+                    )
+                detail = f"Agent {phase}第{index}步前检测到运行时覆盖层：{overlay_detail}"
+                event(events, "executor", phase, "failed", detail)
+                return False, detail, "observe" if observed else "agent"
+        if action_type == "tap_text":
+            ok = tap_text(events, str(spec["text"]))
+        elif action_type == "tap_id":
+            ok = tap_id(events, str(spec["id"]))
+        elif action_type == "tap_xy":
+            ok = tap_xy(events, int(spec["x"]), int(spec["y"]), target)
+        elif action_type == "tap_bbox":
+            x1, y1, x2, y2 = (int(spec[key]) for key in ("x1", "y1", "x2", "y2"))
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            ok = tap_xy(events, cx, cy, target or f"bbox[{x1},{y1},{x2},{y2}]")
+        elif action_type == "type_text":
+            ok = type_text(events, str(spec["text"]))
+        elif action_type == "key":
+            ok = key_name(events, str(spec["key"]))
+        elif action_type == "swipe":
+            ok = swipe_duration(
+                events,
+                int(spec["x1"]),
+                int(spec["y1"]),
+                int(spec["x2"]),
+                int(spec["y2"]),
+                int(spec.get("duration_ms", 350)),
+                target,
+            )
+        elif action_type == "rotate":
+            ok = rotate(events, str(spec["orientation"]).casefold() == "landscape")
+        elif action_type == "wait":
+            ok = wait_action(events, float(spec["seconds"]))
+        elif action_type == "observe":
+            observed = True
+            event(events, "observe", target, "success", f"Agent {phase}明确要求采集页面状态")
+            ok = True
+        elif action_type == "assert_text":
+            elements = screen_elements()
+            ok = _page_value_matches(elements, str(spec["text"]))
+            event(events, "assert", target, "success" if ok else "failed", "页面文字断言")
+        elif action_type == "assert_id":
+            elements = screen_elements()
+            ok = _page_value_matches(elements, str(spec["id"]), resource_id=True)
+            event(events, "assert", target, "success" if ok else "failed", "页面 resource-id 断言")
+        else:
+            # load_action_plan validates this before device actions.  Keep a
+            # defensive branch so a caller using the function directly still
+            # fails closed if a dict is mutated after validation.
+            ok = False
+            event(events, "executor", target, "failed", f"未允许的 Agent 动作类型: {action_type!r}")
+
+        if not ok:
+            detail = f"Agent {phase}动作第{index}步未完成：{action_type}（{target}）"
+            event(events, "executor", phase, "failed", detail)
+            if progress is not None:
+                progress.update(
+                    {
+                        "failed_index": index,
+                        "failure_stage": "action",
+                        # The low-level driver reported failure, so the
+                        # requested action should not have taken effect.
+                        "retry_safe": True,
+                    }
+                )
+            return False, detail, "observe" if observed else "agent"
+
+        after = spec.get("after")
+        if after and not wait_for_agent_target(events, after, phase=f"{phase}第{index}步后"):
+            detail = f"Agent {phase}动作第{index}步后页面断言失败"
+            event(events, "executor", phase, "failed", detail)
+            if progress is not None:
+                progress.update(
+                    {
+                        "failed_index": index,
+                        "failure_stage": "after_action",
+                        "retry_safe": False,
+                    }
+                )
+            return False, detail, "observe" if observed else "agent"
+
+        if interruption_detector is not None:
+            overlay_detail = interruption_detector(screen_elements())
+            if overlay_detail:
+                event(events, "interrupt", target, "detected", overlay_detail)
+                if progress is not None:
+                    progress.update(
+                        {
+                            "failed_index": index,
+                            "failure_stage": "after_action_overlay",
+                            # The action may already have taken effect before
+                            # the overlay appeared.  Do not replay it unless
+                            # the Agent explicitly establishes idempotency.
+                            "retry_safe": False,
+                        }
+                    )
+                detail = f"Agent {phase}第{index}步后检测到运行时覆盖层：{overlay_detail}"
+                event(events, "executor", phase, "failed", detail)
+                return False, detail, "observe" if observed else "agent"
+        if progress is not None:
+            progress["completed_count"] = index
+
+    return True, "", "observe" if observed else "agent"
+
+
+def setup_agent_case(
+    events: list[dict],
+    sheet_name: str,
+    row: int,
+    case: dict,
+    session: ModuleSession,
+    case_plan: dict,
+    page_group_id: str | None = None,
+    page_group_key: str | None = None,
+) -> bool:
+    """Establish one Agent-authored navigation context and target page."""
+
+    del case
+    group_id = page_group_id or str(case_plan.get("page_group_id") or f"{sheet_name}-ungrouped")
+    group_key = page_group_key or str(case_plan.get("page_group_key") or sheet_name)
+    same_group = (
+        session.active_sheet == sheet_name
+        and session.active_page_group_id == group_id
+        and session.active_page_group_key == group_key
+    )
+
+    if same_group:
+        if not rotate(events, False):
+            return False
+        session.page_group_reuse_count += 1
+        event(events, "group_reuse", group_id, "success", "Agent 页面组复用；仍重新校验目标页")
+    else:
+        if not ensure_module_state(events, sheet_name, session):
+            return False
+        session.active_page_group_id = group_id
+        session.active_page_group_key = group_key
+        event(events, "page_group", group_id, "success", f"进入 Agent 导航分组：{group_key}")
+
+    target_page = case_plan["target_page"]
+    if wait_for_agent_target(events, target_page, phase="当前状态"):
+        return True
+
+    navigation = case_plan.get("navigation") or []
+    if not navigation:
+        event(events, "replan", group_id, "failed", "当前页不匹配且 Agent 未提供 navigation")
+        return False
+    ok, detail, _ = execute_agent_actions(events, navigation, phase="公共导航")
+    if ok and wait_for_agent_target(events, target_page, phase="公共导航后"):
+        return True
+
+    # A failed route gets one bounded recovery.  This is still the exact
+    # Agent plan (or its explicitly authored recovery_navigation), never a
+    # new natural-language guess made by the deterministic runner.
+    session.runtime_replan_count += 1
+    event(events, "replan", group_id, "attempt", "Agent 目标页门禁失败，执行一次受限恢复导航")
+    if not ensure_module_state(events, sheet_name, session):
+        event(events, "replan", group_id, "failed", "恢复导航前模块复位失败")
+        return False
+    recovery = case_plan.get("recovery_navigation") or navigation
+    recovery_ok, recovery_detail, _ = execute_agent_actions(events, recovery, phase="恢复导航")
+    if recovery_ok and wait_for_agent_target(events, target_page, phase="恢复导航后"):
+        event(events, "replan", group_id, "success", "恢复导航后 Agent 目标页校验通过")
+        return True
+    event(
+        events,
+        "replan",
+        group_id,
+        "failed",
+        recovery_detail or "恢复导航后 Agent 目标页仍未通过",
+    )
+    return False
+
+
+def _safe_recovery_file_part(value: str) -> str:
+    return str(value).replace("\\", "_").replace("/", "_").replace(":", "_")
+
+
+def _append_jsonl(path: Path, value: dict[str, Any]) -> None:
+    """Best-effort append for diagnostics; recovery must not crash the run."""
+
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(value, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError:
+        # The row's normal journal remains authoritative.  A diagnostics file
+        # failing to append must not turn a recoverable UI problem into a
+        # process-level failure.
+        return
+
+
+def _runtime_recovery_request(
+    *,
+    run_id: str,
+    app_config: AppConfig,
+    output: Path,
+    sheet_name: str,
+    row: int,
+    case: dict,
+    case_plan: dict,
+    failure_phase: str,
+    failure_detail: str,
+    attempt: int,
+    elements: list[dict],
+    screenshot_path: Path,
+    action_progress: dict[str, Any],
+    setup_events: list[dict],
+    action_events: list[dict],
+    max_attempts: int,
+    takeover_history: list[dict] | None = None,
+    total_recovery_actions: int = 0,
+    max_total_recovery_actions: int | None = None,
+) -> dict[str, Any]:
+    """Build the complete, case-scoped context sent to a runtime Agent."""
+
+    def recent(items: list[dict], limit: int = 40) -> list[dict]:
+        return [dict(item) for item in items[-limit:]]
+
+    history = [dict(item) for item in (takeover_history or [])[-8:]]
+    action_budget = max_total_recovery_actions or max_attempts * 16
+
+    return {
+        "request_type": "agent_runtime_recovery_request",
+        "schema_version": "1.0",
+        "request_id": uuid.uuid4().hex,
+        "run": {
+            "run_id": run_id,
+            "app": app_config.slug,
+            "adapter": _active_adapter().name,
+            "device": DEVICE,
+            "output": str(output),
+        },
+        "case": {
+            "sheet": sheet_name,
+            "row": row,
+            "case": dict(case),
+            "action_plan_case": dict(case_plan),
+        },
+        "failure": {
+            "phase": failure_phase,
+            "detail": failure_detail,
+            "attempt": attempt,
+        },
+        "current_state": {
+            "page_observation": summarize(elements),
+            "elements": [dict(element) for element in elements],
+            "screenshot": str(screenshot_path),
+        },
+        "action_progress": dict(action_progress),
+        "recent_setup_trace": recent(setup_events),
+        "recent_action_trace": recent(action_events),
+        "case_takeover": {
+            "scope": "single_excel_row",
+            "mode": "until_case_terminal",
+            "turn": attempt,
+            "max_turns": max_attempts,
+            "previous_turn_count": len(history),
+            "prior_attempts": history,
+            "recovery_actions_used": total_recovery_actions,
+            "max_recovery_actions": action_budget,
+        },
+        "constraints": {
+            "allowed_action_types": sorted(ACTION_TYPES),
+            "max_recovery_actions": 16,
+            "max_runtime_attempts": max_attempts,
+            "max_total_recovery_actions": action_budget,
+            "max_business_action_replays": 1,
+            "hard_page_gate_cannot_be_overridden": True,
+            "replay_requires_explicit_replay_safety_safe": True,
+            "unknown_or_uncertain_business_effect_must_be_blocked": True,
+        },
+        "prompt": build_recovery_prompt(),
+    }
+
+
+def _apply_runtime_recovery_reset(
+    events: list[dict],
+    sheet_name: str,
+    session: ModuleSession,
+    reset: str,
+) -> bool:
+    """Apply only the reset explicitly requested by the runtime Agent."""
+
+    if reset == "none":
+        return True
+    session.active_page_group_id = None
+    session.active_page_group_key = None
+    if reset == "module":
+        return ensure_module_state(events, sheet_name, session)
+    if reset == "cold_start":
+        if not launch_market(events):
+            return False
+        session.active_sheet = sheet_name
+        session.cold_start_count += 1
+        session.recovery_restart_count += 1
+        event(events, "recovery", sheet_name, "success", "Agent 请求的冷启动恢复完成")
+        return True
+    # validate_recovery_plan rejects unknown values.  Keep a defensive branch
+    # for direct callers and mutated dictionaries.
+    event(events, "agent_recovery", sheet_name, "failed", f"未允许的恢复 reset: {reset}")
+    return False
+
+
+def _restore_agent_target_after_recovery(
+    events: list[dict],
+    case_plan: dict,
+    *,
+    interruption_detector: Callable[[list[dict]], str] | None = None,
+) -> tuple[bool, str]:
+    """Re-establish the original hard target without changing the plan."""
+
+    target_page = case_plan["target_page"]
+    if wait_for_agent_target(events, target_page, phase="LLM恢复后"):
+        return True, ""
+    navigation = case_plan.get("navigation") or []
+    if not navigation:
+        return False, "LLM恢复后目标页仍不匹配且原计划没有 navigation"
+    ok, detail, _ = execute_agent_actions(
+        events,
+        navigation,
+        phase="LLM恢复后公共导航",
+        interruption_detector=interruption_detector,
+    )
+    if not ok:
+        return False, detail or "LLM恢复后公共导航未完成"
+    if wait_for_agent_target(events, target_page, phase="LLM恢复后公共导航"):
+        return True, ""
+    return False, "LLM恢复后公共导航完成，但目标页校验仍失败"
+
+
+def run_runtime_agent_recovery(
+    *,
+    agent: Callable[[dict[str, Any]], dict[str, Any]],
+    max_attempts: int,
+    run_id: str,
+    app_config: AppConfig,
+    output: Path,
+    sheet_name: str,
+    row: int,
+    case: dict,
+    case_plan: dict,
+    session: ModuleSession,
+    setup_events: list[dict],
+    action_events: list[dict],
+    setup_ok: bool,
+    action_ok: bool,
+    action_mode: str,
+    error_detail: str,
+    failure_phase: str,
+    action_progress: dict[str, Any],
+    recovery_trace_path: Path,
+    interruption_detector: Callable[[list[dict]], str] | None = None,
+    max_total_recovery_actions: int | None = None,
+) -> RuntimeRecoveryOutcome:
+    """Let an Agent own one failed row until it reaches a terminal outcome.
+
+    A successful recovery is not the end of the takeover session by itself.
+    The original row plan is replayed, and any newly exposed blocker returns
+    to the Agent with the complete bounded takeover history.
+    """
+
+    attempts: list[dict] = []
+    total_recovery_actions = 0
+    try:
+        recovery_action_budget = max(
+            1,
+            int(max_total_recovery_actions or max_attempts * 16),
+        )
+    except (TypeError, ValueError):
+        recovery_action_budget = max(1, max_attempts * 16)
+    if setup_ok and action_ok:
+        current_elements = screen_elements()
+        return RuntimeRecoveryOutcome(
+            setup_ok=True,
+            action_ok=True,
+            action_mode=action_mode,
+            error_detail=error_detail,
+            elements=current_elements,
+            page_observation=summarize(current_elements),
+            attempts=attempts,
+        )
+
+    current_setup_ok = setup_ok
+    current_action_ok = action_ok
+    current_action_mode = action_mode
+    current_error = error_detail or "目标页或本行动作未完成"
+    current_phase = failure_phase or ("setup" if not setup_ok else "action")
+    current_progress = dict(action_progress or {})
+    # A failed action is not automatically a business-side effect.  For
+    # example, an overlay detected before the tap is retry-safe and should not
+    # consume the row's one business replay budget.  A post-action overlay or
+    # any uncertain driver outcome remains conservative.
+    business_action_attempted = bool(
+        setup_ok
+        and not action_ok
+        and current_progress.get("retry_safe") is not True
+    )
+    replay_used = False
+    elements = screen_elements()
+
+    for attempt_number in range(1, max_attempts + 1):
+        session.agent_recovery_count += 1
+        screenshot_path = (
+            output
+            / "shots"
+            / "recovery"
+            / f"{_safe_recovery_file_part(sheet_name)}_row_{row:03d}_attempt_{attempt_number:02d}.png"
+        )
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        shot_ok = take_shot(screenshot_path)
+        elements = screen_elements()
+        request = _runtime_recovery_request(
+            run_id=run_id,
+            app_config=app_config,
+            output=output,
+            sheet_name=sheet_name,
+            row=row,
+            case=case,
+            case_plan=case_plan,
+            failure_phase=current_phase,
+            failure_detail=current_error,
+            attempt=attempt_number,
+            elements=elements,
+            screenshot_path=screenshot_path,
+            action_progress={
+                **current_progress,
+                "runtime_replay_used": replay_used,
+                "business_action_attempted": business_action_attempted,
+            },
+            setup_events=setup_events,
+            action_events=action_events,
+            max_attempts=max_attempts,
+            takeover_history=attempts,
+            total_recovery_actions=total_recovery_actions,
+            max_total_recovery_actions=recovery_action_budget,
+        )
+        request["current_state"]["screenshot_ok"] = shot_ok
+        audit: dict[str, Any] = {
+            "request_id": request["request_id"],
+            "attempt": attempt_number,
+            "failure_phase": current_phase,
+            "failure_detail": current_error,
+            "screenshot": str(screenshot_path).replace("\\", "/"),
+            "screenshot_ok": shot_ok,
+            "takeover_scope": "single_excel_row",
+            "takeover_mode": "until_case_terminal",
+            "recovery_action_count": 0,
+            "replay_action_count": 0,
+        }
+
+        try:
+            raw_plan = agent(request)
+            recovery_plan = validate_recovery_plan(raw_plan)
+        except (AgentRecoveryError, ValueError, TypeError) as exc:
+            session.agent_recovery_failure_count += 1
+            current_error = f"运行时 Agent 恢复失败：{exc}"
+            current_phase = "agent_call"
+            audit.update({"result": "agent_failed", "error": str(exc)})
+            attempts.append(audit)
+            _append_jsonl(
+                recovery_trace_path,
+                {"request": request, "audit": audit},
+            )
+            event(action_events, "agent_recovery", f"{sheet_name}!{row}", "failed", current_error)
+            continue
+
+        audit["agent"] = recovery_plan.get("agent")
+        audit["decision"] = recovery_plan["decision"]
+        audit["reset"] = recovery_plan["reset"]
+        audit["replay_safety"] = recovery_plan["replay_safety"]
+        audit["diagnosis"] = recovery_plan.get("diagnosis", "")
+        audit["reason"] = recovery_plan["reason"]
+        audit["actions"] = recovery_plan["actions"]
+        audit["recovery_action_count"] = len(recovery_plan["actions"])
+        event(
+            action_events,
+            "agent_recovery",
+            f"{sheet_name}!{row}",
+            "blocked" if recovery_plan["decision"] == "blocked" else "success",
+            f"{recovery_plan['decision']}：{recovery_plan['reason']}",
+        )
+
+        if recovery_plan["decision"] == "blocked":
+            session.agent_recovery_failure_count += 1
+            current_error = f"运行时 Agent 判定阻塞：{recovery_plan['reason']}"
+            current_phase = "agent_blocked"
+            audit["result"] = "blocked"
+            attempts.append(audit)
+            _append_jsonl(
+                recovery_trace_path,
+                {"request": request, "response": raw_plan, "audit": audit},
+            )
+            break
+
+        reset_events: list[dict] = []
+        reset_ok = _apply_runtime_recovery_reset(
+            reset_events,
+            sheet_name,
+            session,
+            recovery_plan["reset"],
+        )
+        action_events.extend(reset_events)
+        if not reset_ok:
+            session.agent_recovery_failure_count += 1
+            current_error = "运行时 Agent 指定的状态复位未完成"
+            current_phase = "recovery_reset"
+            audit["result"] = "reset_failed"
+            audit["recovery_action_trace"] = reset_events
+            attempts.append(audit)
+            _append_jsonl(
+                recovery_trace_path,
+                {"request": request, "response": raw_plan, "audit": audit},
+            )
+            continue
+
+        planned_recovery_action_count = len(recovery_plan["actions"])
+        if total_recovery_actions + planned_recovery_action_count > recovery_action_budget:
+            session.agent_recovery_failure_count += 1
+            current_error = (
+                "当前用例 LLM 接管动作预算已耗尽，禁止继续执行恢复动作"
+            )
+            current_phase = "recovery_action_budget"
+            audit["result"] = "recovery_action_budget_exhausted"
+            audit["recovery_action_budget"] = {
+                "used": total_recovery_actions,
+                "requested": planned_recovery_action_count,
+                "maximum": recovery_action_budget,
+            }
+            attempts.append(audit)
+            _append_jsonl(
+                recovery_trace_path,
+                {"request": request, "response": raw_plan, "audit": audit},
+            )
+            break
+
+        recovery_action_events: list[dict] = []
+        recovery_progress: dict[str, Any] = {}
+        if recovery_plan["actions"]:
+            recovery_actions_ok, recovery_detail, _ = execute_agent_actions(
+                recovery_action_events,
+                recovery_plan["actions"],
+                phase="LLM异常恢复",
+                progress=recovery_progress,
+            )
+        else:
+            recovery_actions_ok, recovery_detail = True, ""
+            event(
+                recovery_action_events,
+                "agent_recovery",
+                f"{sheet_name}!{row}",
+                "success",
+                "Agent 未要求额外低层动作，仅请求复位/重新校验",
+            )
+        action_events.extend(recovery_action_events)
+        total_recovery_actions += planned_recovery_action_count
+        if not recovery_actions_ok:
+            session.agent_recovery_failure_count += 1
+            current_error = recovery_detail or "运行时 Agent 恢复动作未完成"
+            current_phase = "recovery_actions"
+            audit["result"] = "recovery_actions_failed"
+            audit["recovery_action_trace"] = recovery_action_events
+            audit["recovery_progress"] = recovery_progress
+            audit["total_recovery_actions"] = total_recovery_actions
+            attempts.append(audit)
+            _append_jsonl(
+                recovery_trace_path,
+                {"request": request, "response": raw_plan, "audit": audit},
+            )
+            continue
+
+        target_events: list[dict] = []
+        target_ok, target_detail = _restore_agent_target_after_recovery(
+            target_events,
+            case_plan,
+            interruption_detector=interruption_detector,
+        )
+        setup_events.extend(target_events)
+        if not target_ok:
+            session.agent_recovery_failure_count += 1
+            current_error = target_detail or "运行时 Agent 恢复后目标页未建立"
+            current_phase = "recovery_navigation"
+            audit["result"] = "target_failed"
+            audit["recovery_action_trace"] = recovery_action_events + target_events
+            audit["total_recovery_actions"] = total_recovery_actions
+            attempts.append(audit)
+            _append_jsonl(
+                recovery_trace_path,
+                {"request": request, "response": raw_plan, "audit": audit},
+            )
+            continue
+
+        planned_actions = list(case_plan.get("actions") or [])
+        retry_progress: dict[str, Any] = {}
+        failed_index = current_progress.get("failed_index")
+        try:
+            failed_index = int(failed_index) if failed_index not in (None, "") else None
+        except (TypeError, ValueError):
+            failed_index = None
+        if (
+            recovery_plan["decision"] == "retry_current_action"
+            and current_setup_ok
+            and failed_index is not None
+            and 1 <= failed_index <= len(planned_actions)
+        ):
+            replay_actions = planned_actions[failed_index - 1 :]
+            replay_start = failed_index
+            replay_phase = "LLM恢复后重试当前动作"
+        else:
+            replay_actions = planned_actions
+            replay_start = 1
+            replay_phase = "LLM恢复后重新执行本行"
+
+        if business_action_attempted and replay_used:
+            session.agent_recovery_failure_count += 1
+            current_error = "同一行本行动作已达到一次运行时重试上限，禁止再次重放"
+            current_phase = "replay_budget_exhausted"
+            audit["result"] = "replay_budget_exhausted"
+            audit["total_recovery_actions"] = total_recovery_actions
+            attempts.append(audit)
+            _append_jsonl(
+                recovery_trace_path,
+                {"request": request, "response": raw_plan, "audit": audit},
+            )
+            break
+        if business_action_attempted:
+            replay_used = True
+
+        audit["replay_action_count"] = len(replay_actions)
+
+        replay_ok, replay_detail, replay_mode = execute_agent_actions(
+            action_events,
+            replay_actions,
+            phase=replay_phase,
+            progress=retry_progress,
+            interruption_detector=interruption_detector,
+        )
+        if replay_ok:
+            current_setup_ok = True
+            current_action_ok = True
+            current_action_mode = replay_mode
+            current_error = ""
+            current_phase = "recovered"
+            elements = screen_elements()
+            audit["result"] = "recovered"
+            audit["recovery_action_trace"] = recovery_action_events + target_events
+            audit["replay_trace"] = action_events[-max(1, len(replay_actions) * 4) :]
+            audit["total_recovery_actions"] = total_recovery_actions
+            attempts.append(audit)
+            session.agent_recovery_success_count += 1
+            _append_jsonl(
+                recovery_trace_path,
+                {"request": request, "response": raw_plan, "audit": audit},
+            )
+            return RuntimeRecoveryOutcome(
+                setup_ok=current_setup_ok,
+                action_ok=current_action_ok,
+                action_mode=current_action_mode,
+                error_detail=current_error,
+                elements=elements,
+                page_observation=summarize(elements),
+                attempts=attempts,
+            )
+
+        session.agent_recovery_failure_count += 1
+        current_setup_ok = True
+        current_action_ok = False
+        business_action_attempted = True
+        current_action_mode = replay_mode
+        current_error = replay_detail or "LLM恢复后重新执行本行动作失败"
+        current_phase = "recovery_replay"
+        mapped_progress = dict(retry_progress)
+        if mapped_progress.get("failed_index") not in (None, ""):
+            try:
+                mapped_progress["failed_index"] = replay_start + int(mapped_progress["failed_index"]) - 1
+            except (TypeError, ValueError):
+                pass
+        current_progress = mapped_progress
+        elements = screen_elements()
+        retry_safe = retry_progress.get("retry_safe")
+        try:
+            completed_count = int(retry_progress.get("completed_count") or 0)
+        except (TypeError, ValueError):
+            completed_count = 0
+        business_action_attempted = bool(
+            business_action_attempted
+            or retry_safe is not True
+            or completed_count > 0
+        )
+        audit["result"] = "replay_failed"
+        audit["recovery_action_trace"] = recovery_action_events + target_events
+        audit["replay_trace"] = action_events[-max(1, len(replay_actions) * 4) :]
+        audit["replay_progress"] = retry_progress
+        audit["total_recovery_actions"] = total_recovery_actions
+        attempts.append(audit)
+        _append_jsonl(
+            recovery_trace_path,
+            {"request": request, "response": raw_plan, "audit": audit},
+        )
+
+    elements = screen_elements()
+    if not current_error:
+        current_error = "运行时 Agent 恢复次数耗尽"
+    return RuntimeRecoveryOutcome(
+        setup_ok=current_setup_ok,
+        action_ok=current_action_ok,
+        action_mode=current_action_mode,
+        error_detail=current_error,
+        elements=elements,
+        page_observation=summarize(elements),
+        attempts=attempts,
+    )
 
 
 def execute_action(events: list[dict], sheet_name: str, row: int, case: dict) -> tuple[bool, str, str]:
-    case_name = str(case.get("case_name", ""))
-    step_name = str(case.get("step_name", ""))
-    action = str(case.get("action", ""))
-    operation_text = f"{step_name} {action}"
-    text = f"{case_name} {operation_text}"
-    low = text.casefold()
-    attempted = False
-    ok = True
-
-    # Orientation is decided from the operation, not from the case title.
-    # This prevents “横屏切换竖屏” from matching the wrong branch.
-    if "竖放" in operation_text or "切换竖屏" in operation_text:
-        attempted = True
-        ok = rotate(events, False) and ok
-    elif "横放" in operation_text or "切换横屏" in operation_text:
-        attempted = True
-        ok = rotate(events, True) and ok
-
-    if "搜索" in operation_text and not any(k in operation_text for k in ("退出搜索", "返回搜索", "取消按钮", "取消")):
-        attempted = True
-        ok = tap_xy(events, 985, 156, "右上角搜索")
-    elif (
-        ("关闭" in operation_text and "搜索" in operation_text)
-        or "关闭按钮" in operation_text
-    ):
-        attempted = True
-        ok = tap_text(events, "关闭")
-        if not ok:
-            ok = tap_id(events, "search_close") or key_back(events)
-    elif "退出搜索" in operation_text or "返回搜索" in operation_text or "左上角的返回" in operation_text or "点击左上角的返回" in operation_text:
-        attempted = True
-        ok = key_back(events) and ok
-    elif any(
-        phrase in operation_text
-        for phrase in ("页面左上角的返回按钮", "点击页面左上角的返回", "左上角的返回按钮")
-    ):
-        attempted = True
-        ok = key_back(events) and ok
-    elif ("取消按钮" in operation_text or "取消" in operation_text) and "取消排序" not in operation_text:
-        attempted = True
-        ok = tap_text(events, "取消")
-        if not ok:
-            ok = key_back(events)
-
-    if "滑动" in text:
-        attempted = True
-        ok = swipe(events, 540, 1900, 540, 850, "上下滑动列表") and ok
-        if "左右" in text or "横屏" in text:
-            ok = swipe(events, 850, 1400, 150, 1400, "左右滑动列表") and ok
-
-    if "刷新" in text:
-        attempted = True
-        ok = tap_xy(events, 796, 156, "右上角刷新")
-
-    if "排序" in text or "表头字段" in text:
-        attempted = True
-        # List headers move with the page and differ between the shared
-        # connect screen and each independent market list.  Resolve the
-        # visible ``涨幅`` header first; retain the legacy coordinate as one
-        # bounded retry for builds that omit header text from the UI tree.
-        header_ok = tap_text(events, "涨幅")
-        if not header_ok:
-            header_ok = tap_xy(events, 758, 403, "表头字段（坐标重试）")
-        ok = header_ok and ok
-
-    if "取消排序" in text:
-        attempted = True
-        ok = tap_xy(events, 104, 403, "取消排序") and ok
-
-    if "切换" in text or "来回" in text:
-        tabs = [tab for tab in ("港股通", "沪股通", "深股通", "自选", "沪深京", "行业", "概念") if tab in text]
-        if tabs:
-            attempted = True
-            coords = {"港股通": (180, 277), "沪股通": (540, 277), "深股通": (900, 277), "自选": (135, 288), "沪深京": (405, 288), "行业": (675, 288), "概念": (945, 288)}
-            for tab in tabs:
-                x, y = coords[tab]
-                ok = tap_xy(events, x, y, tab) and ok
-
-    if "切换到港股tab" in low:
-        attempted = True
-        ok = tap_market_tab(events, "港股") and ok
-    if "切换到“其他”" in text or "切换到其他" in text:
-        attempted = True
-        ok = tap_market_tab(events, "其他") and ok
-    for top_sheet in TOP_QUOTE_SHEETS:
-        if top_sheet in {"港股", "其他"}:
-            continue
-        if (
-            f"切换到“{top_sheet}”tab" in text
-            or f"切换到{top_sheet}tab" in low
-            or f"点击“{top_sheet}”tab" in text
-        ):
-            attempted = True
-            ok = tap_market_tab(events, top_sheet) and ok
-    if "跳转沪深港通" in text:
-        attempted = True
-        ok = tap_xy(events, 900, 462, "沪、深港通") and ok
-    # For row 2 the entry tap is the row's business action.  For later rows,
-    # setup_sheet has already established 看资金 as the target page; repeating
-    # the module entry here only creates a useless extra transition and can
-    # move the app away from the page being tested.
-    if row == 2 and "看资金" in operation_text and any(keyword in operation_text for keyword in ("点击", "进入", "跳转")):
-        attempted = True
-        ok = tap_xy(events, 94, 156, "看资金入口") and ok
-    if "点击恒生指数" in text:
-        attempted = True
-        ok = tap_xy(events, 180, 405, "恒生指数") and ok
-    if "点击国企指数" in text:
-        attempted = True
-        ok = tap_xy(events, 540, 405, "国企指数") and ok
-    if "跳转港股列表" in text:
-        attempted = True
-        ok = tap_xy(events, 876, 541, "港股") and ok
-    if "跳转国内期货列表" in text:
-        attempted = True
-        ok = tap_xy(events, 204, 541, "国内期货") and ok
-    if "跳转外汇列表" in text:
-        attempted = True
-        ok = tap_xy(events, 540, 541, "外汇") and ok
-    if "跳转沪深封闭基金列表" in text:
-        attempted = True
-        ok = tap_xy(events, 204, 878, "沪深封闭基金") and ok
-    if "跳转沪深国债逆回购列表" in text:
-        attempted = True
-        ok = tap_xy(events, 208, 2104, "通用回购逆回购") and ok
-
-    if "点击港股通（沪）更多" in text or "点击港股通（深）更多" in text:
-        attempted = True
-        market = "沪" if "（沪）" in text else "深"
-        ok = _open_hk_connect_list(events, market) and ok
-    elif "点击AH股列表的更多" in text:
-        attempted = True
-        ok = _tap_section_more(events, "AH股", "AH股比价列表页") and ok
-    elif "港股创业板" in text and "更多" in text:
-        attempted = True
-        ok = _tap_section_more(events, "港股创业板", "港股创业板列表页") and ok
-    elif "港股主板" in text and "更多" in text:
-        attempted = True
-        ok = _tap_section_more(events, "港股主板", "港股主板列表页") and ok
-    elif "更多" in text:
-        attempted = True
-        ok = tap_text(events, "更多") and ok
-
-    if any(keyword in text for keyword in ("任意一只股票", "任意个股", "任意一只", "任意一指数", "任意一个指数", "列表中任意", "点击一只", "点击某条")):
-        attempted = True
-        ok = first_list_item(events) and ok
-
-    if "点击i标志" in text or "股指期货介绍一行" in text:
-        attempted = True
-        ok = tap_id(events, "tips_info_iv") or tap_text(events, "股指期货介绍") or ok
-
-    if "涨幅榜、跌幅榜、快速涨幅、换手率、量比、成交额" in text:
-        attempted = True
-        for label in ("涨幅榜", "跌幅榜", "快速涨幅", "换手率", "量比", "成交额"):
-            if has_label(screen_elements(), label):
-                ok = tap_text(events, label) and ok
-
-    if "点击个股分时图右上角的X" in text:
-        attempted = True
-        ok = tap_id(events, "navi_title_right") or key_back(events)
-
-    if "点击上证A股/上证B股" in text:
-        attempted = True
-        for label in ("上证A股", "上证B股", "深证A股", "深证B股", "中小板", "创业板", "科创版", "新三板", "三板", "风险警示", "退市整理"):
-            ok = tap_text(events, label) and ok
-
-    if "点击深证债券/上证债券" in text:
-        attempted = True
-        for label in ("深证债券", "上证债券", "沪深债券", "可转债"):
-            ok = tap_text(events, label) and ok
-
-    if "行业板块、AH股、港股主板、港股创业板" in text:
-        attempted = True
-        entries = ("行业板块", "AH股", "港股主板", "港股创业板")
-        ok = run_independent_entries(
-            entries,
-            ensure_source_page=lambda: _restore_market_home_for_entry(events, sheet_name),
-            execute_entry=lambda label: _tap_any_text(
-                events,
-                (_category_info(label) or ("", (), (label,)))[2],
-                f"{sheet_name}首页-{label}",
-                scroll=True,
-            ),
-            verify_entry=_verify_market_entry,
-        ) and ok
-
-    if "点击下方的“下单”" in text or "点击下方的下单" in text:
-        attempted = True
-        ok = tap_text(events, "下单") and ok
-
-    if "内容删除" in text:
-        attempted = True
-        deleted = False
-        for rid in ("ah_hint_close", "close", "iv_close", "item_right_arrow"):
-            if tap_id(events, rid):
-                deleted = True
-                break
-        ok = deleted and ok
-
-    if "内容收起" in text or "内容展开" in text:
-        attempted = True
-        ok = tap_id(events, "item_right_arrow") and ok
-
-    if not attempted:
-        # Observation-only rows are explicit and remain pending until their
-        # page facts are checked. Unknown actions are never silently passed.
-        if any(keyword in text for keyword in ("查看", "展示", "核对")):
-            event(events, "observe", "当前页面与数据区域", "success", "显式观察类步骤，需根据页面事实判定")
-            return True, "", "observe"
-        detail = f"未识别 Excel 行{row}的操作：{action or case_name}"
-        event(events, "executor", f"{sheet_name}!{row}", "failed", detail)
-        return False, detail, "unrecognized"
-
-    return ok, "; ".join(e.get("detail", "") for e in events if e.get("result") not in {"success"} and e.get("detail")), "action"
+    handler = getattr(_active_adapter(), "legacy_execute_action", None)
+    if not callable(handler):
+        raise AppAdapterError(
+            f"App {_ACTIVE_APP_CONFIG.slug if _ACTIVE_APP_CONFIG else 'unknown'!r} 未提供 legacy action executor"
+        )
+    return handler(events, sheet_name, row, case)
 
 
 def take_shot(path: Path) -> bool:
@@ -1550,9 +1792,10 @@ def take_shot(path: Path) -> bool:
     return rc1 == 0 and rc2 == 0 and path.exists() and path.stat().st_size > 0
 
 
-def build_manifest(workbook: xlrd.book.Book) -> dict:
+def build_manifest(workbook: xlrd.book.Book, sheet_names: Iterable[str] | None = None) -> dict:
+    selected_sheets = tuple(sheet_names or workbook.sheet_names())
     selected = []
-    for sheet_name in SHEETS:
+    for sheet_name in selected_sheets:
         sheet = workbook.sheet_by_name(sheet_name)
         for row in range(2, sheet.nrows + 1):
             selected.append({
@@ -1564,8 +1807,8 @@ def build_manifest(workbook: xlrd.book.Book) -> dict:
     return {
         "manifest_version": "1.0",
         "mode": "full",
-        "source_file": str(SOURCE.resolve()),
-        "source_sheets": list(SHEETS),
+        "source_file": str(SOURCE.resolve()) if SOURCE else "",
+        "source_sheets": list(selected_sheets),
         "expected_count": len(selected),
         "selected_cases": selected,
     }
@@ -1650,21 +1893,177 @@ def _retest_execution_items(plan: dict, queue_entries: list[dict]) -> list[tuple
     return items
 
 
+def _apply_agent_groups(
+    manifest: dict,
+    execution_items: list[tuple[dict, dict, dict]],
+    action_case_plans: dict[tuple[str, int, str], dict],
+) -> None:
+    """Replace context-only group labels with the selected Agent's groups."""
+
+    selected = manifest.get("selected_cases") or []
+    by_key = {
+        (str(case.get("sheet") or ""), int(case.get("row"))): action_case_plans[
+            (str(case.get("case_id") or ""), int(case.get("row")), str(case.get("sheet") or ""))
+        ]
+        for _, _, case in execution_items
+        if (str(case.get("case_id") or ""), int(case.get("row")), str(case.get("sheet") or ""))
+        in action_case_plans
+    }
+    for item in selected:
+        if not isinstance(item, dict):
+            continue
+        plan_item = by_key.get((str(item.get("sheet") or ""), int(item.get("row"))))
+        if plan_item is not None:
+            item["page_group_id"] = plan_item["page_group_id"]
+            item["page_group_key"] = plan_item["page_group_key"]
+
+    groups: list[dict] = []
+    for _, _, case in execution_items:
+        plan_item = action_case_plans.get(
+            (str(case.get("case_id") or ""), int(case.get("row")), str(case.get("sheet") or ""))
+        )
+        if plan_item is None:
+            continue
+        group_id = str(plan_item["page_group_id"])
+        group_key = str(plan_item["page_group_key"])
+        if not groups or groups[-1]["page_group_id"] != group_id or groups[-1]["page_group_key"] != group_key:
+            groups.append(
+                {
+                    "page_group_id": group_id,
+                    "page_group_key": group_key,
+                    "case_ids": [],
+                    "row_range": [int(case["row"]), int(case["row"])],
+                }
+            )
+        groups[-1]["case_ids"].append(case["case_id"])
+        groups[-1]["row_range"][1] = int(case["row"])
+    if groups:
+        manifest["page_groups"] = groups
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="模块级规划、Excel 行级执行的 Android 用例执行器")
-    parser.add_argument("--source", default=str(SOURCE), help=".xls/.xlsx 用例文件")
-    parser.add_argument("--output", default=str(OUTPUT), help="本轮运行目录")
+    parser.add_argument("--app", help="App slug；未指定时从 --profile 推断，否则默认 guotou")
+    parser.add_argument("--source", help=".xls/.xlsx 用例文件；未指定时使用 App 配置的 default_source")
+    parser.add_argument("--profile", help="覆盖 App 配置中的 profile.yaml")
+    parser.add_argument("--device", help="ADB 设备序列号；默认使用配置或当前默认设备")
+    parser.add_argument("--output", help="本轮运行目录；未指定时使用 App 配置或 output/<app>-run")
     parser.add_argument("--sheet", action="append", dest="sheets", help="指定 Sheet，可重复；默认执行预设 Sheet")
     parser.add_argument("--resume", action="store_true", help="从 execution_records.jsonl 继续未完成用例")
     parser.add_argument(
         "--retest-queue",
         help="只执行 retest_results.py plan 生成的单用例复测队列；不传时保持全量 Sheet 执行",
     )
+    parser.add_argument(
+        "--probe",
+        action="store_true",
+        help="导航探测模式：只执行 setup/目标页门禁/截图，不执行 Excel 业务动作",
+    )
+    parser.add_argument(
+        "--probe-queue",
+        help="导航探测队列 JSON；必须与 --probe 一起使用，格式同 retest queue",
+    )
+    parser.add_argument(
+        "--recovery-agent-command",
+        help=(
+            "运行时异常恢复 Agent 命令；通过 stdin 接收 JSON 请求并向 stdout 返回"
+            "一个 agent_runtime_recovery JSON。未指定时也读取"
+            " SIXGILL_RECOVERY_AGENT_COMMAND。存在 --action-plan 时，未设置"
+            " SIXGILL_RUNTIME_AGENT_NAME/MODEL 则默认继承 planner 的 Agent/model"
+        ),
+    )
+    parser.add_argument(
+        "--recovery-agent-timeout",
+        type=float,
+        default=120.0,
+        help="单次运行时 Agent 恢复调用超时时间（秒，默认 120）",
+    )
+    parser.add_argument(
+        "--recovery-max-attempts",
+        type=int,
+        default=None,
+        help=f"单条用例 LLM 接管最大轮次（默认 {MAX_CASE_TAKEOVER_TURNS}）",
+    )
+    planner_group = parser.add_mutually_exclusive_group()
+    planner_group.add_argument(
+        "--action-plan",
+        help=(
+            "当前 Agent 生成的 agent_action_plan.json；执行器只消费其中的结构化 "
+            "navigation/actions，不再从 Excel 原文推断动作"
+        ),
+    )
+    planner_group.add_argument(
+        "--legacy-deterministic",
+        action="store_true",
+        help="显式兼容旧版固定规则执行器；仅用于迁移/诊断，不能代表 Agent 驱动执行",
+    )
     args = parser.parse_args(argv)
 
-    source = Path(args.source).expanduser().resolve()
-    output = Path(args.output).expanduser().resolve()
-    queue_entries = _load_retest_queue(Path(args.retest_queue).expanduser().resolve()) if args.retest_queue else []
+    if not args.action_plan and not args.legacy_deterministic:
+        raise ValueError(
+            "必须提供 --action-plan。固定动作解析已不再是默认路径；"
+            "如确需兼容旧行为，请显式使用 --legacy-deterministic"
+        )
+
+    recovery_command = (
+        args.recovery_agent_command
+        or os.environ.get("SIXGILL_RECOVERY_AGENT_COMMAND")
+        or ""
+    ).strip()
+    recovery_max_attempts = (
+        MAX_RUNTIME_AGENT_RECOVERY_ATTEMPTS
+        if args.recovery_max_attempts is None
+        else args.recovery_max_attempts
+    )
+    if recovery_max_attempts < 1 or recovery_max_attempts > 5:
+        raise ValueError("--recovery-max-attempts 必须在 1..5")
+    recovery_agent = None
+    llm_execution_policy = _EXECUTION_POLICY.get("llm_execution", {})
+    case_takeover_enabled = (
+        bool(llm_execution_policy.get("case_takeover_enabled", True))
+        if isinstance(llm_execution_policy, dict)
+        else True
+    )
+    app_slug = args.app or infer_app_slug_from_profile(args.profile) or DEFAULT_APP_SLUG
+    app_config = load_app_config(PROJECT_ROOT, app_slug, profile_path=args.profile)
+    source_value = args.source or app_config.default_source
+    if source_value is None:
+        raise ValueError(
+            f"App {app_config.slug!r} 未配置 default_source，请通过 --source 指定用例文件"
+        )
+    source = Path(source_value).expanduser().resolve()
+    if args.output:
+        output = Path(args.output).expanduser().resolve()
+    elif app_config.default_output:
+        output = app_config.default_output
+    else:
+        output = (PROJECT_ROOT / "output" / f"{app_config.slug}-run").resolve()
+
+    global DEVICE, SOURCE, APP_PROFILE, OUTPUT, _ACTIVE_ADAPTER, _ACTIVE_APP_CONFIG
+    DEVICE = str(args.device or app_config.document.get("device") or DEFAULT_DEVICE).strip()
+    if not DEVICE:
+        DEVICE = DEFAULT_DEVICE
+    SOURCE = source
+    APP_PROFILE = app_config.profile_path
+    OUTPUT = output
+    global SHOTS
+    SHOTS = OUTPUT / "shots"
+    _ACTIVE_APP_CONFIG = app_config
+    _ACTIVE_ADAPTER = load_app_adapter(app_config, _RUNNER_ADAPTER_RUNTIME)
+    if args.legacy_deterministic and not _ACTIVE_ADAPTER.supports_legacy_deterministic:
+        raise ValueError(
+            f"App {app_config.slug!r} 没有 legacy-deterministic adapter；"
+            "请使用 Agent --action-plan 执行通用路径"
+        )
+
+    if args.probe and args.retest_queue:
+        raise ValueError("--probe 不能与 --retest-queue 同时使用")
+    if args.probe and not args.probe_queue:
+        raise ValueError("--probe 必须提供 --probe-queue")
+    if args.probe_queue and not args.probe:
+        raise ValueError("--probe-queue 必须与 --probe 一起使用")
+    queue_path = args.probe_queue if args.probe else args.retest_queue
+    queue_entries = _load_retest_queue(Path(queue_path).expanduser().resolve()) if queue_path else []
     queue_sheets = tuple(dict.fromkeys(entry["sheet"] for entry in queue_entries))
     if queue_entries and args.sheets:
         unexpected_sheets = sorted(set(queue_sheets).difference(args.sheets))
@@ -1672,24 +2071,119 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(
                 "--sheet 未覆盖复测队列中的 Sheet: " + ", ".join(unexpected_sheets)
             )
-    selected_sheets = tuple(args.sheets or queue_sheets or SHEETS)
+    # An explicit --sheet or queue narrows the scope.  With neither, read
+    # every Sheet present in the source workbook; a hard-coded six-sheet
+    # default silently dropped the workbook's separate ``个股详情`` module.
+    selected_sheets = tuple(args.sheets or queue_sheets)
     output.mkdir(parents=True, exist_ok=True)
     shots = output / "shots"
     shots.mkdir(parents=True, exist_ok=True)
 
-    # LLM/module planning happens once. Runtime execution consumes contiguous
-    # page groups in source order, while each Excel row remains independent.
+    # This is only the deterministic Excel/profile context.  The executable
+    # plan must come from the selected Agent and is validated before any
+    # device action.
     plan = build_module_plan(source, selected_sheets, profile_path=APP_PROFILE)
+    plan["app"] = app_config.manifest_context(adapter_name=_ACTIVE_ADAPTER.name)
     manifest = plan["execution_manifest"]
+    manifest["app"] = app_config.manifest_context(adapter_name=_ACTIVE_ADAPTER.name)
     retest_items = _retest_execution_items(plan, queue_entries) if queue_entries else []
+    if queue_entries:
+        execution_items = retest_items
+    else:
+        execution_items = []
+        for module in plan["modules"]:
+            sheet_name = module["sheet"]
+            page_groups = module.get("page_groups") or [
+                {
+                    "page_group_id": f"{sheet_name}-ungrouped",
+                    "page_group_key": sheet_name,
+                    "cases": module.get("cases", []),
+                }
+            ]
+            execution_items.extend(
+                (module, page_group, case)
+                for page_group in page_groups
+                for case in page_group.get("cases", [])
+            )
+
+    action_plan_document: dict | None = None
+    action_case_plans: dict[tuple[str, int, str], dict] = {}
+    if args.action_plan:
+        action_plan_document, action_case_plans = load_action_plan(
+            args.action_plan,
+            cases=[case for _, _, case in execution_items],
+            source_path=source,
+            profile_path=APP_PROFILE,
+        )
+        planner = action_plan_document.get("planner") or {}
+        plan["planning_mode"] = "agent_structured_action_plan"
+        plan["planner_backend"] = str(planner.get("agent") or "agent")
+        plan["action_plan_file"] = str(Path(args.action_plan).expanduser().resolve())
+        plan["action_plan"] = action_plan_document
+        manifest["planning_mode"] = "agent_structured_action_plan"
+        manifest["agent_plan_required"] = True
+        manifest["llm_plan_required"] = True
+        manifest["agent_plan_file"] = str(Path(args.action_plan).expanduser().resolve())
+        manifest["agent_plan_sha256"] = sha256_file(args.action_plan)
+        manifest["planner_agent"] = str(planner.get("agent") or "agent")
+        manifest["planner_model"] = str(planner.get("model") or "")
+        manifest["planner_prompt_version"] = str(planner.get("prompt_version") or "")
+        manifest["app_profile_file"] = str(APP_PROFILE) if APP_PROFILE else ""
+        manifest["app_profile_sha256"] = sha256_file(APP_PROFILE) if APP_PROFILE else ""
+    else:
+        # Keeping this mode available makes migration and diagnosis possible,
+        # but its output is explicitly marked as legacy and is never the
+        # default execution path.
+        plan["planning_mode"] = "legacy_deterministic_explicit"
+        plan["planner_backend"] = "legacy_rule_executor"
+        manifest["planning_mode"] = "legacy_deterministic_explicit"
+        manifest["agent_plan_required"] = False
+        manifest["llm_plan_required"] = False
+
+    # One run has one logical Agent/model binding. The action-plan planner is
+    # the canonical default; prompt versions and transports stay role-specific,
+    # and explicit role-level environment overrides remain honored.
+    agent_binding = resolve_agent_binding(action_plan_document)
+    if recovery_command:
+        recovery_agent = CommandRecoveryAgent(
+            recovery_command,
+            timeout_seconds=args.recovery_agent_timeout,
+            cwd=PROJECT_ROOT,
+            env=runtime_agent_environment(agent_binding),
+        )
+    runtime_recovery_enabled = (
+        recovery_agent is not None
+        and bool(args.action_plan)
+        and case_takeover_enabled
+    )
+    manifest["agent_binding"] = agent_binding
+    runtime_binding = agent_binding["runtime_recovery"]
+    manifest["runtime_recovery"] = {
+        "enabled": runtime_recovery_enabled,
+        "provider": "external_agent_command" if runtime_recovery_enabled else "disabled",
+        "scope": "single_excel_row" if runtime_recovery_enabled else "disabled",
+        "mode": "until_case_terminal" if runtime_recovery_enabled else "disabled",
+        "agent": runtime_binding["agent"],
+        "model": runtime_binding["model"],
+        "agent_binding_source": runtime_binding["source"],
+        "transport": runtime_binding["transport"],
+        "max_attempts": recovery_max_attempts,
+        "max_recovery_actions": MAX_CASE_TAKEOVER_ACTIONS,
+        "timeout_seconds": args.recovery_agent_timeout,
+        "request_protocol": "agent_runtime_recovery@1.0",
+        "trace_file": "runtime_recovery_trace.jsonl",
+    }
+
     if queue_entries:
         # Keep the source/module plan available for audit, but narrow the
         # execution manifest to the queue.  This makes journal completeness
-        # and downstream review scope reflect the actual retest run.
-        manifest["mode"] = "retest"
-        manifest["execution_scope"] = "single_case_retest"
-        manifest["retest_queue"] = str(Path(args.retest_queue).expanduser().resolve())
-        manifest["retest_queue_cases"] = [
+        # and downstream review scope reflect the actual probe/retest run.
+        manifest["mode"] = "sample" if args.probe else "retest"
+        manifest["execution_scope"] = "navigation_probe" if args.probe else "single_case_retest"
+        queue_key = "navigation_probe_queue" if args.probe else "retest_queue"
+        manifest[queue_key] = str(Path(queue_path).expanduser().resolve())
+        cases_key = "navigation_probe_cases" if args.probe else "retest_queue_cases"
+        manifest[cases_key] = [
             {
                 "case_id": entry["case_id"],
                 "sheet": entry["sheet"],
@@ -1712,14 +2206,20 @@ def main(argv: list[str] | None = None) -> int:
             for _, page_group, case in retest_items
         ]
         manifest["expected_count"] = len(retest_items)
-        manifest["retest_expected_count"] = len(retest_items)
+        if args.probe:
+            manifest["llm_review_required"] = False
+            manifest["navigation_probe_expected_count"] = len(retest_items)
+        else:
+            manifest["retest_expected_count"] = len(retest_items)
+    if args.action_plan:
+        _apply_agent_groups(manifest, execution_items, action_case_plans)
     existing_manifest_path = output / "execution_manifest.json"
     existing_run_id = ""
     if args.resume and existing_manifest_path.is_file():
         try:
             existing_manifest = json.loads(existing_manifest_path.read_text(encoding="utf-8"))
             existing_mode = str(existing_manifest.get("mode") or "full")
-            requested_mode = "retest" if queue_entries else "full"
+            requested_mode = "sample" if args.probe else ("retest" if queue_entries else "full")
             if existing_mode != requested_mode:
                 raise ValueError(
                     f"不能用 resume 混用执行模式: 已有 {existing_mode}，当前请求 {requested_mode}"
@@ -1742,6 +2242,8 @@ def main(argv: list[str] | None = None) -> int:
     manifest["run_id"] = existing_run_id or f"run-{uuid.uuid4().hex}"
     manifest["started_at"] = now()
     (output / "module_plan.json").write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if action_plan_document and Path(args.action_plan).resolve() != (output / "agent_action_plan.json").resolve():
+        shutil.copy2(args.action_plan, output / "agent_action_plan.json")
     (output / "execution_manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     shutil.copy2(source, output / f"{source.stem}_source{source.suffix}")
 
@@ -1752,38 +2254,33 @@ def main(argv: list[str] | None = None) -> int:
     session = ModuleSession()
     runtime_stats_path = output / "runtime_stats.json"
     write_runtime_stats(runtime_stats_path, session)
+    runtime_recovery_trace_path = output / "runtime_recovery_trace.jsonl"
 
     try:
-        if queue_entries:
-            execution_items = retest_items
-        else:
-            execution_items = []
-            for module in plan["modules"]:
-                sheet_name = module["sheet"]
-                page_groups = module.get("page_groups") or [
-                    {
-                        "page_group_id": f"{sheet_name}-ungrouped",
-                        "page_group_key": sheet_name,
-                        "cases": module.get("cases", []),
-                    }
-                ]
-                execution_items.extend(
-                    (module, page_group, case)
-                    for page_group in page_groups
-                    for case in page_group.get("cases", [])
-                )
         for module, page_group, case in execution_items:
                     sheet_name = module["sheet"]
                     page_group_id = str(page_group.get("page_group_id") or f"{sheet_name}-ungrouped")
                     page_group_key = str(page_group.get("page_group_key") or sheet_name)
                     row = int(case["row"])
+                    action_case_plan = (
+                        action_case_plans.get((str(case["case_id"]), row, sheet_name))
+                        if args.action_plan
+                        else None
+                    )
+                    if action_case_plan is not None:
+                        # The selected Agent owns the navigation grouping in
+                        # structured-plan mode;
+                        # the deterministic context grouping is only the
+                        # fallback used by the explicit legacy path.
+                        page_group_id = str(action_case_plan["page_group_id"])
+                        page_group_key = str(action_case_plan["page_group_key"])
                     if journal.has_case(sheet_name, row):
                         continue
 
                     if queue_entries:
-                        # A retest queue is explicitly single-case.  Clear
+                        # A probe/retest queue is explicitly isolated.  Clear
                         # the page-group cache before every row so a row never
-                        # inherits target-page state from another retry.
+                        # inherits target-page state from another attempt.
                         session.active_page_group_id = None
                         session.active_page_group_key = None
 
@@ -1794,20 +2291,64 @@ def main(argv: list[str] | None = None) -> int:
                     action_ok = False
                     action_mode = "setup_failed"
                     error_detail = ""
+                    failure_phase = "setup"
+                    action_progress: dict[str, Any] = {}
+                    runtime_recovery_attempts: list[dict] = []
                     page_observation = "未获取到可用的页面观察"
                     observation = ""
+                    elements: list[dict] = []
                     try:
-                        setup_ok = setup_sheet(
-                            setup_events,
-                            sheet_name,
-                            row,
-                            case,
-                            session,
-                            page_group_id=page_group_id,
-                            page_group_key=page_group_key,
-                        )
-                        if setup_ok:
-                            action_ok, error_detail, action_mode = execute_action(action_events, sheet_name, row, case)
+                        if args.action_plan:
+                            if action_case_plan is None:
+                                raise AgentPlanError(
+                                    f"执行用例缺少已校验的 Agent 计划: {sheet_name}!{row}"
+                                )
+                            setup_ok = setup_agent_case(
+                                setup_events,
+                                sheet_name,
+                                row,
+                                case,
+                                session,
+                                action_case_plan,
+                                page_group_id=page_group_id,
+                                page_group_key=page_group_key,
+                            )
+                        else:
+                            setup_ok = setup_sheet(
+                                setup_events,
+                                sheet_name,
+                                row,
+                                case,
+                                session,
+                                page_group_id=page_group_id,
+                                page_group_key=page_group_key,
+                            )
+                        if setup_ok and args.probe:
+                            event(
+                                action_events,
+                                "probe",
+                                f"{sheet_name}!{row}",
+                                "success",
+                                "导航探测模式：已完成目标页校验，未执行 Excel 业务动作",
+                            )
+                            action_ok = True
+                            action_mode = "probe"
+                        elif setup_ok:
+                            if args.action_plan:
+                                action_ok, error_detail, action_mode = execute_agent_actions(
+                                    action_events,
+                                    action_case_plan.get("actions") or [],
+                                    phase="本行操作",
+                                    progress=action_progress,
+                                    interruption_detector=(
+                                        transient_overlay_detail if runtime_recovery_enabled else None
+                                    ),
+                                )
+                            else:
+                                action_ok, error_detail, action_mode = execute_action(
+                                    action_events, sheet_name, row, case
+                                )
+                            failure_phase = "" if action_ok else "action"
                         else:
                             failed_setup = next(
                                 (
@@ -1818,26 +2359,51 @@ def main(argv: list[str] | None = None) -> int:
                                 "公共前置状态建立失败",
                             )
                             error_detail = f"{failed_setup}；未执行本行操作"
+                            failure_phase = "setup"
                         elements = screen_elements()
                         page_observation = summarize(elements)
-                        observation = build_actual(
-                            action_events,
-                            elements,
-                            setup_ok=setup_ok,
-                            action_ok=action_ok,
-                            error_detail=error_detail,
-                        )
                     except Exception as exc:
                         error_detail = str(exc)
+                        action_ok = False
+                        failure_phase = "executor_exception"
                         event(action_events, "executor", f"{sheet_name}!{row}", "failed", error_detail)
                         page_observation = "未获取到可用的页面观察"
-                        observation = build_actual(
-                            action_events,
-                            [],
+
+                    if (
+                        runtime_recovery_enabled
+                        and action_case_plan is not None
+                        and (not setup_ok or not action_ok)
+                    ):
+                        recovery_outcome = run_runtime_agent_recovery(
+                            agent=recovery_agent,
+                            max_attempts=recovery_max_attempts,
+                            run_id=str(manifest.get("run_id") or ""),
+                            app_config=app_config,
+                            output=output,
+                            sheet_name=sheet_name,
+                            row=row,
+                            case=case,
+                            case_plan=action_case_plan,
+                            session=session,
+                            setup_events=setup_events,
+                            action_events=action_events,
                             setup_ok=setup_ok,
-                            action_ok=False,
+                            action_ok=action_ok,
+                            action_mode=action_mode,
                             error_detail=error_detail,
+                            failure_phase=failure_phase,
+                            action_progress=action_progress,
+                            recovery_trace_path=runtime_recovery_trace_path,
+                            interruption_detector=transient_overlay_detail,
+                            max_total_recovery_actions=MAX_CASE_TAKEOVER_ACTIONS,
                         )
+                        setup_ok = recovery_outcome.setup_ok
+                        action_ok = recovery_outcome.action_ok
+                        action_mode = recovery_outcome.action_mode
+                        error_detail = recovery_outcome.error_detail
+                        elements = recovery_outcome.elements
+                        page_observation = recovery_outcome.page_observation
+                        runtime_recovery_attempts = recovery_outcome.attempts
 
                     evidence_path = shots / f"{sheet_name}_row_{row:03d}.png"
                     shot_ok = take_shot(evidence_path)
@@ -1850,9 +2416,22 @@ def main(argv: list[str] | None = None) -> int:
                         str(case.get(key, "")) for key in ("case_name", "entry", "precondition", "action", "expected")
                     )
                     verification_only = any(k in verification_text for k in ("PC", "核对", "数据刷新", "实时", "开市", "时段"))
-                    if not setup_ok or not action_ok or not shot_ok:
+                    if not setup_ok or not action_ok:
                         status = "⛔阻塞"
                         blocked_reason = error_detail or "入口、动作或独立证据采集失败"
+                    elif not shot_ok:
+                        status = "⛔阻塞"
+                        blocked_reason = "独立证据截图未生成或为空"
+                    elif args.probe:
+                        status = "✅通过"
+                        blocked_reason = ""
+                    elif args.action_plan:
+                        # A successful low-level action is not a semantic
+                        # verdict.  Leave this row for the Agent's screenshot /
+                        # expected-result review; only deterministic gates can
+                        # produce an immediate blocked status here.
+                        status = "🟡待验证"
+                        blocked_reason = ""
                     elif action_mode == "observe":
                         status = "🟡待验证"
                         blocked_reason = "该行是显式观察类步骤，需根据页面事实确认预期结果"
@@ -1862,6 +2441,33 @@ def main(argv: list[str] | None = None) -> int:
                     else:
                         status = "✅通过"
                         blocked_reason = ""
+
+                    judgment_reason = executor_judgment_reason(
+                        status,
+                        setup_ok=setup_ok,
+                        action_ok=action_ok,
+                        shot_ok=shot_ok,
+                        action_mode=action_mode,
+                        error_detail=error_detail,
+                        blocked_reason=blocked_reason,
+                        probe=args.probe,
+                        agent_plan=bool(args.action_plan),
+                    )
+                    if runtime_recovery_attempts:
+                        recovery_summary = (
+                            f"运行时 Agent 已介入 {len(runtime_recovery_attempts)} 次并"
+                            + ("恢复后完成重试" if setup_ok and action_ok else "仍未恢复")
+                        )
+                        judgment_reason = f"{judgment_reason}；{recovery_summary}"
+                    observation = build_actual(
+                        action_events,
+                        elements,
+                        setup_ok=setup_ok,
+                        action_ok=action_ok,
+                        error_detail=error_detail,
+                        judgment_status=status,
+                        judgment_reason=judgment_reason,
+                    )
 
                     record = {
                         "module": module["module"],
@@ -1884,14 +2490,51 @@ def main(argv: list[str] | None = None) -> int:
                         "page_group_id": page_group_id,
                         "page_group_key": page_group_key,
                         "status": status,
+                        "planning_mode": (
+                            "agent_structured_action_plan"
+                            if args.action_plan
+                            else "legacy_deterministic_explicit"
+                        ),
                         "action_mode": action_mode,
                         "actual": observation,
                         "observation": observation,
+                        "judgment_reason": judgment_reason,
+                        "judgment": {
+                            "status": status,
+                            "reason": judgment_reason,
+                            "source": "executor_preliminary" if args.action_plan else "executor",
+                        },
                         "page_observation": page_observation,
                         "evidence": [str(evidence_path).replace("\\", "/")],
                         "action_trace": action_events,
                         "tested_at": now(),
                     }
+                    if action_case_plan is not None:
+                        record["action_plan_case"] = {
+                            "target_page": action_case_plan.get("target_page"),
+                            "navigation": action_case_plan.get("navigation") or [],
+                            "actions": action_case_plan.get("actions") or [],
+                            "expected_observations": action_case_plan.get("expected_observations") or [],
+                        }
+                    if runtime_recovery_attempts:
+                        record["runtime_recovery"] = {
+                            "enabled": True,
+                            "scope": "single_excel_row",
+                            "mode": "until_case_terminal",
+                            "attempt_count": len(runtime_recovery_attempts),
+                            "recovered": bool(setup_ok and action_ok),
+                            "terminal": "recovered" if setup_ok and action_ok else "blocked",
+                            "recovery_action_count": sum(
+                                int(attempt.get("recovery_action_count") or 0)
+                                for attempt in runtime_recovery_attempts
+                            ),
+                            "attempts": runtime_recovery_attempts,
+                        }
+                    if args.probe:
+                        record["probe"] = {
+                            "navigation_only": True,
+                            "business_action_executed": False,
+                        }
                     if blocked_reason:
                         record["blocked_reason"] = blocked_reason
                     persisted = journal.append(record)
@@ -1909,10 +2552,11 @@ def main(argv: list[str] | None = None) -> int:
                         }
                     )
                     write_runtime_stats(runtime_stats_path, session)
+                    run_label = "probe" if args.probe else ("retest" if queue_entries else "batch")
                     print(
                         f"{sheet_name}!{row}: {status} group={page_group_id} "
                         f"setup={setup_ok} action={action_ok} evidence={shot_ok}"
-                        f"{' [retest]' if queue_entries else ''}",
+                        f" [{run_label}]",
                         flush=True,
                     )
     except KeyboardInterrupt:
@@ -1931,12 +2575,21 @@ def main(argv: list[str] | None = None) -> int:
         {
             "type": "runtime_policy",
             "scope": "run",
-            "policy": "module_cold_start_page_group_reuse_row_execution",
+            "policy": (
+                "agent_structured_actions_adapter_module_cold_start_page_group_reuse_row_execution"
+                if args.action_plan
+                else "legacy_deterministic_adapter_module_cold_start_page_group_reuse_row_execution"
+            ),
+            "adapter": _active_adapter().name,
+            "agent_plan_required": bool(args.action_plan),
+            "llm_plan_required": bool(args.action_plan),
             "stats": session_snapshot(session),
         }
     )
     final_path = journal.finalize(setup_trace=setup_trace)
-    if queue_entries:
+    if args.probe:
+        shutil.copy2(final_path, output / "navigation_probe_execution.json")
+    elif queue_entries:
         # Keep the conventional retest_results.py input name alongside the
         # journal's canonical execution_records.json.
         shutil.copy2(final_path, output / "retest_execution.json")
@@ -1948,7 +2601,7 @@ def main(argv: list[str] | None = None) -> int:
     profile_feedback = build_profile_feedback(
         {"cases": records},
         run_dir=output,
-        app_slug="guotou",
+        app_slug=app_config.slug,
         app_version=str(plan.get("app_profile_context", {}).get("app_version") or "unknown"),
     )
     (output / "profile_feedback.json").write_text(

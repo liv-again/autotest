@@ -50,6 +50,35 @@ python tools/droid.py key BACK            # 回退，探下一个
 
 **一屏多探**：进了买入页就顺便把价格微调、仓位键、限价/市价切换全探掉，不重复进页（省 token，metrics.md 的"一屏多用例"策略）。
 
+## Excel 回归的可选导航探测
+
+画像探索和 Excel 用例的导航探测是两个层次：前者补齐或重验证
+`profile.yaml`，后者在正式回归前用少量代表行验证 Excel 目标页。后者是
+**可选前置步骤**，默认不调用，不改变普通回归执行。
+
+队列生成（不操作设备）：
+
+```bash
+python tools/navigation_probe.py build \
+  --source <cases.xlsx> \
+  --profile apps/<slug>/profile.yaml \
+  --out runs/navigation-probe/navigation_probe_queue.json
+```
+
+执行探测需要调用支持 `--probe --probe-queue` 的 App runner：
+
+```bash
+python tools/navigation_probe.py run \
+  --source <cases.xlsx> \
+  --profile apps/<slug>/profile.yaml \
+  --runner <app-runner.py> \
+  --output runs/navigation-probe
+```
+
+该模式只做 setup、目标页门禁和独立截图，不执行 Excel 业务动作。探测通过后
+再启动正式回归；失败时只修正并重探受影响路径。`--retest-queue` 仍只用于
+首轮失败/阻塞/待验证用例的正式复测。
+
 ## Step 1'：导航图爬取（前置入口未知时的兜底）
 
 **触发**：无种子（异平台）或种子漂移失效，候选入口无法从已知导航链到达。

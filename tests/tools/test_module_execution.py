@@ -75,11 +75,14 @@ def test_build_actual_uses_trace_steps_and_screenshot_visible_text():
         [{"text": "港股"}, {"text": "AH股"}, {"id": "action_bar_root"}],
         setup_ok=True,
         action_ok=True,
+        judgment_status="✅通过",
+        judgment_reason="截图中的港股标题和AH股区域支持该结论",
     )
 
     assert "AI执行步骤：" in actual
     assert "点击已识别控件“顶部港股”" in actual
     assert "截图可见文字/标题：港股、AH股" in actual
+    assert "判断理由：判定为✅通过。截图中的港股标题和AH股区域支持该结论" in actual
     assert "action_bar_root" not in actual
     assert "行情界面，点击“港股”tab页" not in actual
 

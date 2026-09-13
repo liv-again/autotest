@@ -4,8 +4,10 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+import os
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools.agent_binding import reviewer_default_from_document
 from tools.llm_review_results import merge_reviews
 
 
@@ -53,10 +55,14 @@ def process(run_dir: Path) -> None:
         return
     document = json.loads(execution_path.read_text(encoding="utf-8"))
     queue = json.loads(queue_path.read_text(encoding="utf-8"))
+    reviewer_default = reviewer_default_from_document(queue) or {}
+    agent_name = os.environ.get("SIXGILL_AGENT_NAME") or reviewer_default.get("agent") or "configured-agent"
+    agent_model = os.environ.get("SIXGILL_AGENT_MODEL") or reviewer_default.get("model") or "configured-model"
+    prompt_version = os.environ.get("SIXGILL_AGENT_PROMPT_VERSION", "row-review-v1")
     reviews = {
         "schema_version": "1.0",
         "review_scope": "single_excel_row",
-        "agent": {"name": "Codex", "model": "gpt-6-astra", "prompt_version": "six-sheet-review-v1"},
+        "agent": {"name": agent_name, "model": agent_model, "prompt_version": prompt_version},
         "review_binding": queue["queue_binding"],
         "reviews": [_review_for(item) for item in document.get("cases", [])],
     }

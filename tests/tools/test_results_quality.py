@@ -36,6 +36,14 @@ def _strict_case(*, actual, status="✅通过", evidence=None, case_id="TC-001")
     }
 
 
+def _judged_actual(observation, status="✅通过"):
+    return (
+        "AI执行步骤：\n1. 执行测试动作\n"
+        f"操作结果：\n{observation}\n"
+        f"判断理由：判定为{status}。页面事实和独立证据支持该结论。"
+    )
+
+
 def test_strict_rejects_generic_actual_before_saving(tmp_path):
     source = tmp_path / "cases.xlsx"
     output = tmp_path / "out.xlsx"
@@ -148,7 +156,7 @@ def test_strict_rejects_reused_actual_across_unrelated_cases(tmp_path):
     workbook.save(source)
 
     cases = [
-        _strict_case(actual="页面状态正常", case_id=case_id)
+        _strict_case(actual=_judged_actual("页面状态正常"), case_id=case_id)
         for case_id in ("TC-001", "TC-002", "TC-003")
     ]
     for row, case in enumerate(cases, start=2):
@@ -163,7 +171,7 @@ def test_contextual_repeat_actual_is_allowed_for_independent_rows():
     cases = []
     selected = []
     for row, case_id in ((2, "TC-001"), (3, "TC-002"), (4, "TC-003")):
-        case = _strict_case(actual="当前页面显示港股首页", case_id=case_id)
+        case = _strict_case(actual=_judged_actual("当前页面显示港股首页"), case_id=case_id)
         case.update(
             {
                 "row": row,
@@ -210,7 +218,7 @@ def test_build_results_preserves_setup_trace_and_inherits_evidence():
                             "step_index": 1,
                             "row": 2,
                             "status": "✅通过",
-                                "actual": "点击查询后进入查询页面并显示结果列表",
+                            "actual": _judged_actual("点击查询后进入查询页面并显示结果列表"),
                                 "action_trace": [
                                     {"type": "tap", "target": "查询", "result": "success"}
                                 ],
@@ -244,8 +252,44 @@ def test_build_results_never_fills_missing_actual():
         )
 
 
-def test_build_results_requires_global_execution_manifest_and_action_trace():
+def test_build_results_rejects_actual_without_three_required_sections():
     case = _strict_case(actual="页面显示查询结果")
+    with pytest.raises(BuildResultsError, match="AI执行步骤|操作结果|判断理由"):
+        build_results(
+            {
+                "execution_manifest": {
+                    "mode": "full",
+                    "expected_count": 1,
+                    "selected_cases": [{"sheet": "用例", "row": 2, "case_id": "TC-001"}],
+                },
+                "cases": [case],
+            }
+        )
+
+
+def test_build_results_rejects_generic_judgment_reason():
+    case = _strict_case(
+        actual=(
+            "AI执行步骤：\n1. 执行测试动作\n"
+            "操作结果：\n页面显示查询结果\n"
+            "判断理由：判定为✅通过。通过"
+        )
+    )
+    with pytest.raises(BuildResultsError, match="判断理由不能是通用占位语"):
+        build_results(
+            {
+                "execution_manifest": {
+                    "mode": "full",
+                    "expected_count": 1,
+                    "selected_cases": [{"sheet": "用例", "row": 2, "case_id": "TC-001"}],
+                },
+                "cases": [case],
+            }
+        )
+
+
+def test_build_results_requires_global_execution_manifest_and_action_trace():
+    case = _strict_case(actual=_judged_actual("页面显示查询结果"))
     with pytest.raises(BuildResultsError, match="execution_manifest"):
         build_results({"cases": [case]})
 
@@ -278,8 +322,8 @@ def test_build_results_rejects_unexecuted_and_reused_evidence():
             }
         )
 
-    first = _strict_case(actual="页面显示查询结果", case_id="TC-001")
-    second = _strict_case(actual="页面显示排序结果", case_id="TC-002")
+    first = _strict_case(actual=_judged_actual("页面显示查询结果"), case_id="TC-001")
+    second = _strict_case(actual=_judged_actual("页面显示排序结果"), case_id="TC-002")
     second["row"] = 3
     second["evidence"] = list(first["evidence"])
     with pytest.raises(BuildResultsError, match="独立结果证据"):
@@ -299,8 +343,8 @@ def test_build_results_rejects_unexecuted_and_reused_evidence():
 
 
 def test_page_batching_remains_allowed_when_cases_are_independently_traced():
-    first = _strict_case(actual="页面显示查询结果", case_id="TC-001")
-    second = _strict_case(actual="页面显示排序结果", case_id="TC-002")
+    first = _strict_case(actual=_judged_actual("页面显示查询结果"), case_id="TC-001")
+    second = _strict_case(actual=_judged_actual("页面显示排序结果"), case_id="TC-002")
     second["row"] = 3
     document = build_results(
         {

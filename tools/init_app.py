@@ -11,8 +11,12 @@ app.yaml / profile.yaml（空三节）/ prerequisites.yaml（空三节）骨架�
   （需在新 App 实测走安全门）；
 - 写盘后顺带派生 画像.md/前置条件.md/速览.md，否则 lint_profile 会报 md-yaml 漂移；
 - seed 条目的 last_verified/app_version 保留种子原值（语义：路径按种子版本抄来、未在本次
-  接入 App 上验证），evidence_run 改写为 seed-from-<seed_slug> 且 status 改 unverified。
+接入 App 上验证），evidence_run 改写为 seed-from-<seed_slug> 且 status 改 unverified。
 """
+
+# New Apps run with the executor's GenericAdapter by default.  A dedicated
+# apps/<slug>/adapter.py is only needed for launch/reset behaviour that cannot
+# be expressed by the Agent action plan.
 import argparse
 import datetime
 import os

@@ -1,0 +1,9 @@
+# Planning-stage Agent/model defaults.
+#
+# ``model`` is the exact wire identifier expected by the selected runtime,
+# rather than a display name.  Override it per process with
+# SIXGILL_PLANNER_MODEL when another Agent/runtime is intentionally selected.
+schema_version: "1.0"
+planner:
+  model: "gpt-5.6-luna"
+  model_env: "SIXGILL_PLANNER_MODEL"

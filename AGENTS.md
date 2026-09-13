@@ -4,6 +4,10 @@
 
 跨 App/Sheet/模块的复盘经验统一维护在 `.claude/skills/app-selftest/references/execution-lessons.md`（镜像路径为 `.codex/skills/app-selftest/references/execution-lessons.md`），执行前必须读取；应用的 `test_notes.yaml` 只能补充专属页面身份和控件证据。
 
+跨 App 的规划技巧机器可读权威源为 `tools/generic_planning_knowledge.yaml`；运行 `tools/agent_plan.py context` 时会自动注入 `generic_planning_knowledge`，当前选定的 Agent 在生成动作计划时必须读取并仅对适用用例采用。
+
+规划阶段的默认模型配置位于 `tools/agent_model_config.yaml`，当前桌面运行时默认使用精确模型 ID `gpt-5.6-luna`。如明确切换到其他 Agent/runtime，可通过 `SIXGILL_PLANNER_MODEL` 覆盖；action plan 的 `planner.model` 必须记录实际使用的模型 wire ID，不能填写界面显示名称或旧别名。
+
 ## 模块级规划，页面分组，行级执行，异常集中分析
 
 - LLM 每个模块或 Sheet 只解析一次，生成 `module_plan.json`；计划必须按一级至四级目录、入口和前置条件生成连续页面组，不能只按“个股详情页”等页面名称合并不同市场。
@@ -11,7 +15,8 @@
 - 执行器按 `source_order`/Excel 实际行号升序逐条执行，每行是一个独立执行单元；不得因为多个用例落在同一页面而合并业务动作。
 - 每行必须独立完成：目标组上下文确认 → 目标页校验 → 本行动作 → 本行断言/观察 → 独立证据 → 立即落盘。
 - 同组行可以复用已验证的导航和页面，但每行仍必须重新校验目标页；页面被上一行改变时，先恢复组锚点。不同层级目录、入口、市场、方向或前置数据不得跨组复用。
-- 目标页校验失败时，允许一次运行时重规划/恢复；恢复仍失败才阻塞，不得把一次错误 Plan 当成最终结论。
+- 目标页校验失败时，进入当前 Excel 行的用例级 Agent 接管；接管期间每个新阻塞点都重新交给 Agent，直到本行完成、Agent 明确阻塞或达到安全预算，不得把一次错误 Plan 当成最终结论。
+- 运行时异常恢复可由外部 Agent 按需介入：执行器把当前行、原计划、UI 树、截图、完整接管历史和轨迹交给 Agent，Agent 只能返回受校验的低层恢复动作；默认最多 5 个接管轮次和 64 个恢复动作，必须重新通过原目标页门禁，不能用 Agent 结果覆盖硬阻塞。恢复成功的诊断、动作、截图和重试轨迹会写入 `profile_feedback.json` 的 `recovery_candidates`，只作为后续画像更新候选。
 - 模块完成后，LLM 只接收失败、阻塞、待验证和低置信度记录做集中分析；通过用例不重复发送完整 UI 树和截图。
 
 ## 状态与动作硬约束
@@ -27,7 +32,7 @@
 ## 结果与恢复
 
 - 每条结果必须带 `sheet`、`row`、`case_id`、`source_order`、`execution_order`、独立 evidence 和 `action → observation → status` 事实链；`actual` 应包含基于真实 `action_trace` 生成的可读执行步骤，以及截图可见的文字/标题/结果。
-- 原始 UI 树只能作为 `page_observation` 等底层证据，不能单独填入“AI实测结果”；不得复制 Excel 操作描述，截图无法确认的内容必须明确标为无法确认。
+- 原始 UI 树只能作为 `page_observation` 等底层证据，不能单独填入“AI实测结果”；不得复制 Excel 操作描述，截图无法确认的内容必须明确标为无法确认。`AI实测结果` 必须按“AI执行步骤 → 操作结果 → 判断理由”三段输出，判断理由必须说明为何判定通过、不通过、待验证或阻塞。
 - 每完成一行就追加到 `execution_records.jsonl` 并更新 `execution_state.json`；禁止等整批结束后才一次性写结果。
 - 暂停或异常时，保留最后一条已持久化行，恢复时只补跑未完成行；不能读取旧轮次结果补齐当前轮次。
 - Sheet/模块首轮结束后，对失败、部分通过、阻塞、待验证用例逐条复测一次；复测仍不通过就保留最终失败/阻塞，不自动无限复测。
@@ -37,4 +42,6 @@
 
 ## 当前临时脚本的使用限制
 
-`tools/_run_three_sheets.py` 仅用于本次问题复盘和兼容旧任务。后续必须使用其中的模块规划、行级 journal 和状态复位逻辑；不得重新引入“只解析用例名称+操作描述、未识别动作 observe 通过、末尾一次性写结果”等旧行为。
+`tools/_run_three_sheets.py` 仅用于本次问题复盘和兼容旧任务。正式执行必须先由当前选定的 Agent 读取 `tools/agent_plan.py context` 产出的上下文，生成并校验 `agent_action_plan.json`，再以 `--action-plan` 启动；执行器只调用计划中的低层动作。`--legacy-deterministic` 仅用于迁移诊断。不得重新引入“只解析用例名称+操作描述、未识别动作 observe 通过、末尾一次性写结果”等旧行为。
+
+执行器通过 `--app` 选择 `apps/<slug>/app.yaml`；没有 `adapter.py` 的 App 必须走 `tools.app_adapter.GenericAdapter`，不得在通用执行器中新增券商专用包名、坐标或页面判断。

@@ -4,6 +4,16 @@ from tools.contracts.validate import validate
 from tools.retest_results import RetestError, merge_retests, plan_retests
 
 
+def _judged_actual(actual, status):
+    if not actual:
+        return actual
+    return (
+        "AI执行步骤：\n1. 执行测试动作\n"
+        f"操作结果：\n{actual}\n"
+        f"判断理由：判定为{status}。页面事实和独立证据支持该结论。"
+    )
+
+
 def _case(row, case_id, status, actual, *, module="行情", evidence=None):
     return {
         "sheet": "行情",
@@ -12,7 +22,7 @@ def _case(row, case_id, status, actual, *, module="行情", evidence=None):
         "case_name": case_id,
         "module": module,
         "status": status,
-        "actual": actual,
+        "actual": _judged_actual(actual, status),
         "evidence": evidence or [f"assertions/{case_id}"],
         "action_trace": [
             {"type": "tap", "target": case_id, "result": "success"}
@@ -35,7 +45,7 @@ def test_plan_selects_non_passing_cases_one_by_one_and_excludes_skip():
     assert plan["execution_mode"] == "single_case"
     assert [item["retest_id"] for item in plan["cases"]] == ["行情!2", "行情!3"]
     assert all(item["fresh_setup_required"] for item in plan["cases"])
-    assert plan["cases"][0]["case"]["actual"] == "页面显示错误提示"
+    assert "判断理由：判定为❌失败。" in plan["cases"][0]["case"]["actual"]
 
 
 def test_merge_retest_replaces_visible_result_but_keeps_both_attempts():
@@ -59,7 +69,7 @@ def test_merge_retest_replaces_visible_result_but_keeps_both_attempts():
 
     final = merged["cases"][0]
     assert final["status"] == "✅通过"
-    assert final["actual"] == "重新进入后页面显示完整数据"
+    assert "判断理由：判定为✅通过。" in final["actual"]
     assert [item["phase"] for item in final["attempts"]] == ["batch", "single_case_retest"]
     assert final["attempts"][0]["status"] == "❌失败"
     assert final["attempts"][1]["status"] == "✅通过"

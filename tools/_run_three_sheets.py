@@ -10,15 +10,15 @@ from __future__ import annotations
 import datetime
 import argparse
 import json
-import os
 import shutil
+import subprocess
 import sys
 import time
 import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Iterable, Mapping
 
 import xlrd
 
@@ -28,14 +28,8 @@ from tools.exception_queue import build_exception_queue
 from tools.execution_journal import ExecutionJournal, JournalError
 from tools.execution_gate import load_execution_policy
 from tools.module_planner import build_module_plan
-from tools.agent_plan import ACTION_TYPES, AgentPlanError, load_action_plan, sha256_file
-from tools.agent_binding import resolve_agent_binding, runtime_agent_environment
-from tools.agent_recovery import (
-    AgentRecoveryError,
-    CommandRecoveryAgent,
-    build_recovery_prompt,
-    validate_recovery_plan,
-)
+from tools.agent_plan import AgentPlanError, load_action_plan, sha256_file
+from tools.agent_binding import resolve_agent_binding
 from tools.app_adapter import (
     AppAdapter,
     AppAdapterError,
@@ -52,6 +46,12 @@ from tools.page_execution import (
 )
 from tools.profile_feedback import build_profile_feedback
 from tools.llm_review_queue import build_review_queue
+from tools.retest_results import (
+    RetestError,
+    merge_retests,
+    plan_retests,
+    write_json as write_retest_json,
+)
 from tools.results_quality import append_judgment_reason
 
 
@@ -91,16 +91,6 @@ def _policy_int(section: str, key: str, default: int) -> int:
 MAX_SOFT_BACK = _policy_int("state_reset", "max_soft_back", MAX_SOFT_BACK)
 PAGE_READY_RETRIES = _policy_int("page_gate", "page_ready_retries", PAGE_READY_RETRIES)
 MAX_ACTION_RETRIES = _policy_int("page_gate", "max_action_retries", 1)
-MAX_CASE_TAKEOVER_TURNS = _policy_int(
-    "llm_execution",
-    "max_case_takeover_turns",
-    _policy_int("llm_execution", "max_runtime_recovery_attempts", 5),
-)
-MAX_CASE_TAKEOVER_ACTIONS = _policy_int(
-    "llm_execution", "max_case_takeover_actions", 64
-)
-# Keep the old import name available to diagnostics and third-party runners.
-MAX_RUNTIME_AGENT_RECOVERY_ATTEMPTS = MAX_CASE_TAKEOVER_TURNS
 
 
 def now() -> str:
@@ -128,22 +118,6 @@ class ModuleSession:
     recovery_restart_count: int = 0
     page_group_reuse_count: int = 0
     runtime_replan_count: int = 0
-    agent_recovery_count: int = 0
-    agent_recovery_success_count: int = 0
-    agent_recovery_failure_count: int = 0
-
-
-@dataclass
-class RuntimeRecoveryOutcome:
-    """Result of the bounded Agent recovery loop for one Excel row."""
-
-    setup_ok: bool
-    action_ok: bool
-    action_mode: str
-    error_detail: str
-    elements: list[dict]
-    page_observation: str
-    attempts: list[dict[str, Any]]
 
 
 class RunnerAdapterRuntime:
@@ -368,26 +342,18 @@ def screen_elements() -> list[dict]:
         return []
 
 
-def screen_blob(elements: list[dict]) -> str:
-    return " ".join((e.get("text") or "") + " " + (e.get("desc") or "") + " " + (e.get("id") or "") for e in elements)
+_CONTROL_LOOKUP_ACTIONS = frozenset({"tap_text", "tap_id", "assert_text", "assert_id"})
 
 
-def transient_overlay_detail(elements: list[dict]) -> str:
-    """Return a hint when the selected App declares a likely overlay signal.
+def _control_lookup_failed(action_type: str, action_events: list[dict]) -> bool:
+    """Classify a selector/assertion failure without interpreting Excel text."""
 
-    This is deliberately only a trigger for Agent analysis.  It does not
-    infer a close button or execute any action, because words such as
-    ``关闭`` can be a legitimate business control on a normal page.
-    """
-
-    signals = tuple(getattr(_active_adapter(), "transient_overlay_signals", ()) or ())
-    if not signals:
-        return ""
-    blob = screen_blob(elements)
-    matched = [signal for signal in signals if signal and signal in blob]
-    if not matched:
-        return ""
-    return "疑似临时覆盖层信号：" + "、".join(dict.fromkeys(matched))
+    if action_type not in _CONTROL_LOOKUP_ACTIONS or not action_events:
+        return False
+    latest = action_events[-1]
+    if latest.get("type") not in {"tap", "assert"}:
+        return False
+    return str(latest.get("result") or "").casefold() in {"not_found", "failed"}
 
 
 def has_label(elements: list[dict], label: str) -> bool:
@@ -705,9 +671,6 @@ def session_snapshot(session: ModuleSession) -> dict[str, int | str | None]:
         "recovery_restart_count": session.recovery_restart_count,
         "page_group_reuse_count": session.page_group_reuse_count,
         "runtime_replan_count": session.runtime_replan_count,
-        "agent_recovery_count": session.agent_recovery_count,
-        "agent_recovery_success_count": session.agent_recovery_success_count,
-        "agent_recovery_failure_count": session.agent_recovery_failure_count,
     }
 
 
@@ -783,12 +746,12 @@ def _action_step(event_item: dict) -> str | None:
         return f"调整屏幕方向为“{target}”"
     if kind == "observe":
         return "采集当前页面状态"
+    if kind == "selector_rebind":
+        return f"视觉定位后刷新 UI 树并重新绑定控件“{target}”：{detail or result}"
     if kind == "executor":
         return f"执行器报告异常：{detail or target or result}"
     if kind == "interrupt":
         return f"检测到运行时覆盖层“{detail or target or result}”"
-    if kind == "agent_recovery":
-        return f"Agent 异常恢复：{detail or target or result}"
     if kind == "retry":
         return f"对“{target}”进行一次受限重试"
     if kind == "assert":
@@ -1016,13 +979,11 @@ def execute_agent_actions(
     actions: list[dict],
     *,
     phase: str,
-    progress: dict[str, Any] | None = None,
-    interruption_detector: Callable[[list[dict]], str] | None = None,
 ) -> tuple[bool, str, str]:
     """Execute only validated low-level actions authored by an Agent.
 
     This function intentionally has no Excel-text parser and no fallback
-    branch.  If the Agent did not provide an action, the caller receives a
+    branch. If the Agent did not provide an action, the caller receives a
     blocked result instead of an inferred tap or an observe-only pass.
     """
 
@@ -1040,32 +1001,6 @@ def execute_agent_actions(
             or spec.get("id")
             or f"{action_type}#{index}"
         )
-        if progress is not None:
-            progress.update(
-                {
-                    "last_action_index": index,
-                    "last_action_type": action_type,
-                    "last_action_target": target,
-                    "failed_index": None,
-                    "failure_stage": "",
-                    "retry_safe": False,
-                }
-            )
-        if interruption_detector is not None:
-            overlay_detail = interruption_detector(screen_elements())
-            if overlay_detail:
-                event(events, "interrupt", target, "detected", overlay_detail)
-                if progress is not None:
-                    progress.update(
-                        {
-                            "failed_index": index,
-                            "failure_stage": "before_action",
-                            "retry_safe": True,
-                        }
-                    )
-                detail = f"Agent {phase}第{index}步前检测到运行时覆盖层：{overlay_detail}"
-                event(events, "executor", phase, "failed", detail)
-                return False, detail, "observe" if observed else "agent"
         if action_type == "tap_text":
             ok = tap_text(events, str(spec["text"]))
         elif action_type == "tap_id":
@@ -1107,61 +1042,25 @@ def execute_agent_actions(
             ok = _page_value_matches(elements, str(spec["id"]), resource_id=True)
             event(events, "assert", target, "success" if ok else "failed", "页面 resource-id 断言")
         else:
-            # load_action_plan validates this before device actions.  Keep a
-            # defensive branch so a caller using the function directly still
-            # fails closed if a dict is mutated after validation.
+            # load_action_plan validates this before device actions. Keep a
+            # defensive branch so a direct caller still fails closed if a
+            # dict is mutated after validation.
             ok = False
             event(events, "executor", target, "failed", f"未允许的 Agent 动作类型: {action_type!r}")
 
         if not ok:
+            control_not_found = _control_lookup_failed(action_type, events)
             detail = f"Agent {phase}动作第{index}步未完成：{action_type}（{target}）"
+            if control_not_found:
+                detail += "；控件或断言目标未在当前 UI 树找到"
             event(events, "executor", phase, "failed", detail)
-            if progress is not None:
-                progress.update(
-                    {
-                        "failed_index": index,
-                        "failure_stage": "action",
-                        # The low-level driver reported failure, so the
-                        # requested action should not have taken effect.
-                        "retry_safe": True,
-                    }
-                )
             return False, detail, "observe" if observed else "agent"
 
         after = spec.get("after")
         if after and not wait_for_agent_target(events, after, phase=f"{phase}第{index}步后"):
             detail = f"Agent {phase}动作第{index}步后页面断言失败"
             event(events, "executor", phase, "failed", detail)
-            if progress is not None:
-                progress.update(
-                    {
-                        "failed_index": index,
-                        "failure_stage": "after_action",
-                        "retry_safe": False,
-                    }
-                )
             return False, detail, "observe" if observed else "agent"
-
-        if interruption_detector is not None:
-            overlay_detail = interruption_detector(screen_elements())
-            if overlay_detail:
-                event(events, "interrupt", target, "detected", overlay_detail)
-                if progress is not None:
-                    progress.update(
-                        {
-                            "failed_index": index,
-                            "failure_stage": "after_action_overlay",
-                            # The action may already have taken effect before
-                            # the overlay appeared.  Do not replay it unless
-                            # the Agent explicitly establishes idempotency.
-                            "retry_safe": False,
-                        }
-                    )
-                detail = f"Agent {phase}第{index}步后检测到运行时覆盖层：{overlay_detail}"
-                event(events, "executor", phase, "failed", detail)
-                return False, detail, "observe" if observed else "agent"
-        if progress is not None:
-            progress["completed_count"] = index
 
     return True, "", "observe" if observed else "agent"
 
@@ -1232,548 +1131,6 @@ def setup_agent_case(
         recovery_detail or "恢复导航后 Agent 目标页仍未通过",
     )
     return False
-
-
-def _safe_recovery_file_part(value: str) -> str:
-    return str(value).replace("\\", "_").replace("/", "_").replace(":", "_")
-
-
-def _append_jsonl(path: Path, value: dict[str, Any]) -> None:
-    """Best-effort append for diagnostics; recovery must not crash the run."""
-
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8", newline="\n") as handle:
-            handle.write(json.dumps(value, ensure_ascii=False) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-    except OSError:
-        # The row's normal journal remains authoritative.  A diagnostics file
-        # failing to append must not turn a recoverable UI problem into a
-        # process-level failure.
-        return
-
-
-def _runtime_recovery_request(
-    *,
-    run_id: str,
-    app_config: AppConfig,
-    output: Path,
-    sheet_name: str,
-    row: int,
-    case: dict,
-    case_plan: dict,
-    failure_phase: str,
-    failure_detail: str,
-    attempt: int,
-    elements: list[dict],
-    screenshot_path: Path,
-    action_progress: dict[str, Any],
-    setup_events: list[dict],
-    action_events: list[dict],
-    max_attempts: int,
-    takeover_history: list[dict] | None = None,
-    total_recovery_actions: int = 0,
-    max_total_recovery_actions: int | None = None,
-) -> dict[str, Any]:
-    """Build the complete, case-scoped context sent to a runtime Agent."""
-
-    def recent(items: list[dict], limit: int = 40) -> list[dict]:
-        return [dict(item) for item in items[-limit:]]
-
-    history = [dict(item) for item in (takeover_history or [])[-8:]]
-    action_budget = max_total_recovery_actions or max_attempts * 16
-
-    return {
-        "request_type": "agent_runtime_recovery_request",
-        "schema_version": "1.0",
-        "request_id": uuid.uuid4().hex,
-        "run": {
-            "run_id": run_id,
-            "app": app_config.slug,
-            "adapter": _active_adapter().name,
-            "device": DEVICE,
-            "output": str(output),
-        },
-        "case": {
-            "sheet": sheet_name,
-            "row": row,
-            "case": dict(case),
-            "action_plan_case": dict(case_plan),
-        },
-        "failure": {
-            "phase": failure_phase,
-            "detail": failure_detail,
-            "attempt": attempt,
-        },
-        "current_state": {
-            "page_observation": summarize(elements),
-            "elements": [dict(element) for element in elements],
-            "screenshot": str(screenshot_path),
-        },
-        "action_progress": dict(action_progress),
-        "recent_setup_trace": recent(setup_events),
-        "recent_action_trace": recent(action_events),
-        "case_takeover": {
-            "scope": "single_excel_row",
-            "mode": "until_case_terminal",
-            "turn": attempt,
-            "max_turns": max_attempts,
-            "previous_turn_count": len(history),
-            "prior_attempts": history,
-            "recovery_actions_used": total_recovery_actions,
-            "max_recovery_actions": action_budget,
-        },
-        "constraints": {
-            "allowed_action_types": sorted(ACTION_TYPES),
-            "max_recovery_actions": 16,
-            "max_runtime_attempts": max_attempts,
-            "max_total_recovery_actions": action_budget,
-            "max_business_action_replays": 1,
-            "hard_page_gate_cannot_be_overridden": True,
-            "replay_requires_explicit_replay_safety_safe": True,
-            "unknown_or_uncertain_business_effect_must_be_blocked": True,
-        },
-        "prompt": build_recovery_prompt(),
-    }
-
-
-def _apply_runtime_recovery_reset(
-    events: list[dict],
-    sheet_name: str,
-    session: ModuleSession,
-    reset: str,
-) -> bool:
-    """Apply only the reset explicitly requested by the runtime Agent."""
-
-    if reset == "none":
-        return True
-    session.active_page_group_id = None
-    session.active_page_group_key = None
-    if reset == "module":
-        return ensure_module_state(events, sheet_name, session)
-    if reset == "cold_start":
-        if not launch_market(events):
-            return False
-        session.active_sheet = sheet_name
-        session.cold_start_count += 1
-        session.recovery_restart_count += 1
-        event(events, "recovery", sheet_name, "success", "Agent 请求的冷启动恢复完成")
-        return True
-    # validate_recovery_plan rejects unknown values.  Keep a defensive branch
-    # for direct callers and mutated dictionaries.
-    event(events, "agent_recovery", sheet_name, "failed", f"未允许的恢复 reset: {reset}")
-    return False
-
-
-def _restore_agent_target_after_recovery(
-    events: list[dict],
-    case_plan: dict,
-    *,
-    interruption_detector: Callable[[list[dict]], str] | None = None,
-) -> tuple[bool, str]:
-    """Re-establish the original hard target without changing the plan."""
-
-    target_page = case_plan["target_page"]
-    if wait_for_agent_target(events, target_page, phase="LLM恢复后"):
-        return True, ""
-    navigation = case_plan.get("navigation") or []
-    if not navigation:
-        return False, "LLM恢复后目标页仍不匹配且原计划没有 navigation"
-    ok, detail, _ = execute_agent_actions(
-        events,
-        navigation,
-        phase="LLM恢复后公共导航",
-        interruption_detector=interruption_detector,
-    )
-    if not ok:
-        return False, detail or "LLM恢复后公共导航未完成"
-    if wait_for_agent_target(events, target_page, phase="LLM恢复后公共导航"):
-        return True, ""
-    return False, "LLM恢复后公共导航完成，但目标页校验仍失败"
-
-
-def run_runtime_agent_recovery(
-    *,
-    agent: Callable[[dict[str, Any]], dict[str, Any]],
-    max_attempts: int,
-    run_id: str,
-    app_config: AppConfig,
-    output: Path,
-    sheet_name: str,
-    row: int,
-    case: dict,
-    case_plan: dict,
-    session: ModuleSession,
-    setup_events: list[dict],
-    action_events: list[dict],
-    setup_ok: bool,
-    action_ok: bool,
-    action_mode: str,
-    error_detail: str,
-    failure_phase: str,
-    action_progress: dict[str, Any],
-    recovery_trace_path: Path,
-    interruption_detector: Callable[[list[dict]], str] | None = None,
-    max_total_recovery_actions: int | None = None,
-) -> RuntimeRecoveryOutcome:
-    """Let an Agent own one failed row until it reaches a terminal outcome.
-
-    A successful recovery is not the end of the takeover session by itself.
-    The original row plan is replayed, and any newly exposed blocker returns
-    to the Agent with the complete bounded takeover history.
-    """
-
-    attempts: list[dict] = []
-    total_recovery_actions = 0
-    try:
-        recovery_action_budget = max(
-            1,
-            int(max_total_recovery_actions or max_attempts * 16),
-        )
-    except (TypeError, ValueError):
-        recovery_action_budget = max(1, max_attempts * 16)
-    if setup_ok and action_ok:
-        current_elements = screen_elements()
-        return RuntimeRecoveryOutcome(
-            setup_ok=True,
-            action_ok=True,
-            action_mode=action_mode,
-            error_detail=error_detail,
-            elements=current_elements,
-            page_observation=summarize(current_elements),
-            attempts=attempts,
-        )
-
-    current_setup_ok = setup_ok
-    current_action_ok = action_ok
-    current_action_mode = action_mode
-    current_error = error_detail or "目标页或本行动作未完成"
-    current_phase = failure_phase or ("setup" if not setup_ok else "action")
-    current_progress = dict(action_progress or {})
-    # A failed action is not automatically a business-side effect.  For
-    # example, an overlay detected before the tap is retry-safe and should not
-    # consume the row's one business replay budget.  A post-action overlay or
-    # any uncertain driver outcome remains conservative.
-    business_action_attempted = bool(
-        setup_ok
-        and not action_ok
-        and current_progress.get("retry_safe") is not True
-    )
-    replay_used = False
-    elements = screen_elements()
-
-    for attempt_number in range(1, max_attempts + 1):
-        session.agent_recovery_count += 1
-        screenshot_path = (
-            output
-            / "shots"
-            / "recovery"
-            / f"{_safe_recovery_file_part(sheet_name)}_row_{row:03d}_attempt_{attempt_number:02d}.png"
-        )
-        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-        shot_ok = take_shot(screenshot_path)
-        elements = screen_elements()
-        request = _runtime_recovery_request(
-            run_id=run_id,
-            app_config=app_config,
-            output=output,
-            sheet_name=sheet_name,
-            row=row,
-            case=case,
-            case_plan=case_plan,
-            failure_phase=current_phase,
-            failure_detail=current_error,
-            attempt=attempt_number,
-            elements=elements,
-            screenshot_path=screenshot_path,
-            action_progress={
-                **current_progress,
-                "runtime_replay_used": replay_used,
-                "business_action_attempted": business_action_attempted,
-            },
-            setup_events=setup_events,
-            action_events=action_events,
-            max_attempts=max_attempts,
-            takeover_history=attempts,
-            total_recovery_actions=total_recovery_actions,
-            max_total_recovery_actions=recovery_action_budget,
-        )
-        request["current_state"]["screenshot_ok"] = shot_ok
-        audit: dict[str, Any] = {
-            "request_id": request["request_id"],
-            "attempt": attempt_number,
-            "failure_phase": current_phase,
-            "failure_detail": current_error,
-            "screenshot": str(screenshot_path).replace("\\", "/"),
-            "screenshot_ok": shot_ok,
-            "takeover_scope": "single_excel_row",
-            "takeover_mode": "until_case_terminal",
-            "recovery_action_count": 0,
-            "replay_action_count": 0,
-        }
-
-        try:
-            raw_plan = agent(request)
-            recovery_plan = validate_recovery_plan(raw_plan)
-        except (AgentRecoveryError, ValueError, TypeError) as exc:
-            session.agent_recovery_failure_count += 1
-            current_error = f"运行时 Agent 恢复失败：{exc}"
-            current_phase = "agent_call"
-            audit.update({"result": "agent_failed", "error": str(exc)})
-            attempts.append(audit)
-            _append_jsonl(
-                recovery_trace_path,
-                {"request": request, "audit": audit},
-            )
-            event(action_events, "agent_recovery", f"{sheet_name}!{row}", "failed", current_error)
-            continue
-
-        audit["agent"] = recovery_plan.get("agent")
-        audit["decision"] = recovery_plan["decision"]
-        audit["reset"] = recovery_plan["reset"]
-        audit["replay_safety"] = recovery_plan["replay_safety"]
-        audit["diagnosis"] = recovery_plan.get("diagnosis", "")
-        audit["reason"] = recovery_plan["reason"]
-        audit["actions"] = recovery_plan["actions"]
-        audit["recovery_action_count"] = len(recovery_plan["actions"])
-        event(
-            action_events,
-            "agent_recovery",
-            f"{sheet_name}!{row}",
-            "blocked" if recovery_plan["decision"] == "blocked" else "success",
-            f"{recovery_plan['decision']}：{recovery_plan['reason']}",
-        )
-
-        if recovery_plan["decision"] == "blocked":
-            session.agent_recovery_failure_count += 1
-            current_error = f"运行时 Agent 判定阻塞：{recovery_plan['reason']}"
-            current_phase = "agent_blocked"
-            audit["result"] = "blocked"
-            attempts.append(audit)
-            _append_jsonl(
-                recovery_trace_path,
-                {"request": request, "response": raw_plan, "audit": audit},
-            )
-            break
-
-        reset_events: list[dict] = []
-        reset_ok = _apply_runtime_recovery_reset(
-            reset_events,
-            sheet_name,
-            session,
-            recovery_plan["reset"],
-        )
-        action_events.extend(reset_events)
-        if not reset_ok:
-            session.agent_recovery_failure_count += 1
-            current_error = "运行时 Agent 指定的状态复位未完成"
-            current_phase = "recovery_reset"
-            audit["result"] = "reset_failed"
-            audit["recovery_action_trace"] = reset_events
-            attempts.append(audit)
-            _append_jsonl(
-                recovery_trace_path,
-                {"request": request, "response": raw_plan, "audit": audit},
-            )
-            continue
-
-        planned_recovery_action_count = len(recovery_plan["actions"])
-        if total_recovery_actions + planned_recovery_action_count > recovery_action_budget:
-            session.agent_recovery_failure_count += 1
-            current_error = (
-                "当前用例 LLM 接管动作预算已耗尽，禁止继续执行恢复动作"
-            )
-            current_phase = "recovery_action_budget"
-            audit["result"] = "recovery_action_budget_exhausted"
-            audit["recovery_action_budget"] = {
-                "used": total_recovery_actions,
-                "requested": planned_recovery_action_count,
-                "maximum": recovery_action_budget,
-            }
-            attempts.append(audit)
-            _append_jsonl(
-                recovery_trace_path,
-                {"request": request, "response": raw_plan, "audit": audit},
-            )
-            break
-
-        recovery_action_events: list[dict] = []
-        recovery_progress: dict[str, Any] = {}
-        if recovery_plan["actions"]:
-            recovery_actions_ok, recovery_detail, _ = execute_agent_actions(
-                recovery_action_events,
-                recovery_plan["actions"],
-                phase="LLM异常恢复",
-                progress=recovery_progress,
-            )
-        else:
-            recovery_actions_ok, recovery_detail = True, ""
-            event(
-                recovery_action_events,
-                "agent_recovery",
-                f"{sheet_name}!{row}",
-                "success",
-                "Agent 未要求额外低层动作，仅请求复位/重新校验",
-            )
-        action_events.extend(recovery_action_events)
-        total_recovery_actions += planned_recovery_action_count
-        if not recovery_actions_ok:
-            session.agent_recovery_failure_count += 1
-            current_error = recovery_detail or "运行时 Agent 恢复动作未完成"
-            current_phase = "recovery_actions"
-            audit["result"] = "recovery_actions_failed"
-            audit["recovery_action_trace"] = recovery_action_events
-            audit["recovery_progress"] = recovery_progress
-            audit["total_recovery_actions"] = total_recovery_actions
-            attempts.append(audit)
-            _append_jsonl(
-                recovery_trace_path,
-                {"request": request, "response": raw_plan, "audit": audit},
-            )
-            continue
-
-        target_events: list[dict] = []
-        target_ok, target_detail = _restore_agent_target_after_recovery(
-            target_events,
-            case_plan,
-            interruption_detector=interruption_detector,
-        )
-        setup_events.extend(target_events)
-        if not target_ok:
-            session.agent_recovery_failure_count += 1
-            current_error = target_detail or "运行时 Agent 恢复后目标页未建立"
-            current_phase = "recovery_navigation"
-            audit["result"] = "target_failed"
-            audit["recovery_action_trace"] = recovery_action_events + target_events
-            audit["total_recovery_actions"] = total_recovery_actions
-            attempts.append(audit)
-            _append_jsonl(
-                recovery_trace_path,
-                {"request": request, "response": raw_plan, "audit": audit},
-            )
-            continue
-
-        planned_actions = list(case_plan.get("actions") or [])
-        retry_progress: dict[str, Any] = {}
-        failed_index = current_progress.get("failed_index")
-        try:
-            failed_index = int(failed_index) if failed_index not in (None, "") else None
-        except (TypeError, ValueError):
-            failed_index = None
-        if (
-            recovery_plan["decision"] == "retry_current_action"
-            and current_setup_ok
-            and failed_index is not None
-            and 1 <= failed_index <= len(planned_actions)
-        ):
-            replay_actions = planned_actions[failed_index - 1 :]
-            replay_start = failed_index
-            replay_phase = "LLM恢复后重试当前动作"
-        else:
-            replay_actions = planned_actions
-            replay_start = 1
-            replay_phase = "LLM恢复后重新执行本行"
-
-        if business_action_attempted and replay_used:
-            session.agent_recovery_failure_count += 1
-            current_error = "同一行本行动作已达到一次运行时重试上限，禁止再次重放"
-            current_phase = "replay_budget_exhausted"
-            audit["result"] = "replay_budget_exhausted"
-            audit["total_recovery_actions"] = total_recovery_actions
-            attempts.append(audit)
-            _append_jsonl(
-                recovery_trace_path,
-                {"request": request, "response": raw_plan, "audit": audit},
-            )
-            break
-        if business_action_attempted:
-            replay_used = True
-
-        audit["replay_action_count"] = len(replay_actions)
-
-        replay_ok, replay_detail, replay_mode = execute_agent_actions(
-            action_events,
-            replay_actions,
-            phase=replay_phase,
-            progress=retry_progress,
-            interruption_detector=interruption_detector,
-        )
-        if replay_ok:
-            current_setup_ok = True
-            current_action_ok = True
-            current_action_mode = replay_mode
-            current_error = ""
-            current_phase = "recovered"
-            elements = screen_elements()
-            audit["result"] = "recovered"
-            audit["recovery_action_trace"] = recovery_action_events + target_events
-            audit["replay_trace"] = action_events[-max(1, len(replay_actions) * 4) :]
-            audit["total_recovery_actions"] = total_recovery_actions
-            attempts.append(audit)
-            session.agent_recovery_success_count += 1
-            _append_jsonl(
-                recovery_trace_path,
-                {"request": request, "response": raw_plan, "audit": audit},
-            )
-            return RuntimeRecoveryOutcome(
-                setup_ok=current_setup_ok,
-                action_ok=current_action_ok,
-                action_mode=current_action_mode,
-                error_detail=current_error,
-                elements=elements,
-                page_observation=summarize(elements),
-                attempts=attempts,
-            )
-
-        session.agent_recovery_failure_count += 1
-        current_setup_ok = True
-        current_action_ok = False
-        business_action_attempted = True
-        current_action_mode = replay_mode
-        current_error = replay_detail or "LLM恢复后重新执行本行动作失败"
-        current_phase = "recovery_replay"
-        mapped_progress = dict(retry_progress)
-        if mapped_progress.get("failed_index") not in (None, ""):
-            try:
-                mapped_progress["failed_index"] = replay_start + int(mapped_progress["failed_index"]) - 1
-            except (TypeError, ValueError):
-                pass
-        current_progress = mapped_progress
-        elements = screen_elements()
-        retry_safe = retry_progress.get("retry_safe")
-        try:
-            completed_count = int(retry_progress.get("completed_count") or 0)
-        except (TypeError, ValueError):
-            completed_count = 0
-        business_action_attempted = bool(
-            business_action_attempted
-            or retry_safe is not True
-            or completed_count > 0
-        )
-        audit["result"] = "replay_failed"
-        audit["recovery_action_trace"] = recovery_action_events + target_events
-        audit["replay_trace"] = action_events[-max(1, len(replay_actions) * 4) :]
-        audit["replay_progress"] = retry_progress
-        audit["total_recovery_actions"] = total_recovery_actions
-        attempts.append(audit)
-        _append_jsonl(
-            recovery_trace_path,
-            {"request": request, "response": raw_plan, "audit": audit},
-        )
-
-    elements = screen_elements()
-    if not current_error:
-        current_error = "运行时 Agent 恢复次数耗尽"
-    return RuntimeRecoveryOutcome(
-        setup_ok=current_setup_ok,
-        action_ok=current_action_ok,
-        action_mode=current_action_mode,
-        error_detail=current_error,
-        elements=elements,
-        page_observation=summarize(elements),
-        attempts=attempts,
-    )
 
 
 def execute_action(events: list[dict], sheet_name: str, row: int, case: dict) -> tuple[bool, str, str]:
@@ -1941,6 +1298,159 @@ def _apply_agent_groups(
         manifest["page_groups"] = groups
 
 
+def _blocked_retest_command(
+    *,
+    app_slug: str,
+    source: Path,
+    profile: Path | None,
+    device: str,
+    output: Path,
+    queue_path: Path,
+    action_plan: str | None,
+    legacy_deterministic: bool,
+    resume: bool,
+) -> list[str]:
+    """Build the isolated second-pass command without live Agent recovery."""
+
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--app",
+        app_slug,
+        "--source",
+        str(source),
+        "--device",
+        device,
+        "--output",
+        str(output),
+        "--retest-queue",
+        str(queue_path),
+        "--no-auto-retest-blocked",
+    ]
+    if profile is not None:
+        command.extend(["--profile", str(profile)])
+    if action_plan:
+        command.extend(["--action-plan", str(Path(action_plan).expanduser().resolve())])
+    elif legacy_deterministic:
+        command.append("--legacy-deterministic")
+    if resume:
+        command.append("--resume")
+    return command
+
+
+def _run_blocked_retest_once(
+    execution_document: Mapping[str, Any],
+    *,
+    output: Path,
+    app_slug: str,
+    source: Path,
+    profile: Path | None,
+    device: str,
+    action_plan: str | None,
+    legacy_deterministic: bool,
+) -> tuple[dict[str, Any], Path | None, dict[str, Any], int]:
+    """Retest first-pass blocked rows once and merge both attempts.
+
+    This deliberately starts a normal isolated executor process and reuses the
+    already validated Agent action plan. The child disables recursive blocked
+    retesting so the deferred second pass remains bounded to one round.
+    """
+
+    queue_document = plan_retests(
+        execution_document,
+        scope="all",
+        status_buckets=("blocked",),
+    )
+    queue_path = write_retest_json(queue_document, output / "blocked_retest_queue.json")
+    retest_output = output / "blocked-retest"
+    planned = len(queue_document.get("cases") or [])
+    summary: dict[str, Any] = {
+        "schema_version": "1.0",
+        "strategy": "deferred_second_pass",
+        "status_buckets": ["blocked"],
+        "max_retest_rounds": 1,
+        "planned": planned,
+        "completed": 0,
+        "queue": str(queue_path),
+        "output": str(retest_output),
+    }
+    summary_path = output / "blocked_retest_summary.json"
+    if planned == 0:
+        summary["status"] = "not_needed"
+        write_retest_json(summary, summary_path)
+        return dict(execution_document), None, summary, 0
+
+    resume = (retest_output / "execution_manifest.json").is_file()
+    command = _blocked_retest_command(
+        app_slug=app_slug,
+        source=source,
+        profile=profile,
+        device=device,
+        output=retest_output,
+        queue_path=queue_path,
+        action_plan=action_plan,
+        legacy_deterministic=legacy_deterministic,
+        resume=resume,
+    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(PROJECT_ROOT),
+            check=False,
+        )
+    except OSError as exc:
+        summary["status"] = "failed"
+        summary["error"] = f"复测执行器无法启动: {exc}"
+        write_retest_json(summary, summary_path)
+        return dict(execution_document), None, summary, 2
+    summary["child_exit_code"] = completed.returncode
+    if completed.returncode != 0:
+        summary["status"] = "paused" if completed.returncode == 130 else "failed"
+        write_retest_json(summary, summary_path)
+        return dict(execution_document), None, summary, int(completed.returncode)
+
+    retest_execution_path = retest_output / "retest_execution.json"
+    if not retest_execution_path.is_file():
+        summary["status"] = "failed"
+        summary["error"] = f"复测执行完成但缺少结果文件: {retest_execution_path}"
+        write_retest_json(summary, summary_path)
+        return dict(execution_document), None, summary, 2
+    try:
+        retest_document = json.loads(retest_execution_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        summary["status"] = "failed"
+        summary["error"] = f"复测结果无法读取: {exc}"
+        write_retest_json(summary, summary_path)
+        return dict(execution_document), None, summary, 2
+
+    try:
+        merged = merge_retests(
+            execution_document,
+            retest_document,
+            plan=queue_document,
+            require_all=True,
+            require_evidence=True,
+        )
+    except (RetestError, OSError, TypeError) as exc:
+        summary["status"] = "failed"
+        summary["error"] = f"复测结果合并失败: {exc}"
+        write_retest_json(summary, summary_path)
+        return dict(execution_document), None, summary, 2
+    merged_path = write_retest_json(
+        merged,
+        output / "execution_records.retested.json",
+    )
+    summary.update(
+        {
+            "status": "complete",
+            "completed": len((retest_document or {}).get("cases") or []),
+            "merged_result": str(merged_path),
+        }
+    )
+    write_retest_json(summary, summary_path)
+    return merged, merged_path, summary, 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="模块级规划、Excel 行级执行的 Android 用例执行器")
     parser.add_argument("--app", help="App slug；未指定时从 --profile 推断，否则默认 guotou")
@@ -1955,6 +1465,15 @@ def main(argv: list[str] | None = None) -> int:
         help="只执行 retest_results.py plan 生成的单用例复测队列；不传时保持全量 Sheet 执行",
     )
     parser.add_argument(
+        "--auto-retest-blocked",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "首轮完成后在当前 output/blocked-retest 下自动复测阻塞用例一次；"
+            "默认开启，最多复测一轮"
+        ),
+    )
+    parser.add_argument(
         "--probe",
         action="store_true",
         help="导航探测模式：只执行 setup/目标页门禁/截图，不执行 Excel 业务动作",
@@ -1962,27 +1481,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--probe-queue",
         help="导航探测队列 JSON；必须与 --probe 一起使用，格式同 retest queue",
-    )
-    parser.add_argument(
-        "--recovery-agent-command",
-        help=(
-            "运行时异常恢复 Agent 命令；通过 stdin 接收 JSON 请求并向 stdout 返回"
-            "一个 agent_runtime_recovery JSON。未指定时也读取"
-            " SIXGILL_RECOVERY_AGENT_COMMAND。存在 --action-plan 时，未设置"
-            " SIXGILL_RUNTIME_AGENT_NAME/MODEL 则默认继承 planner 的 Agent/model"
-        ),
-    )
-    parser.add_argument(
-        "--recovery-agent-timeout",
-        type=float,
-        default=120.0,
-        help="单次运行时 Agent 恢复调用超时时间（秒，默认 120）",
-    )
-    parser.add_argument(
-        "--recovery-max-attempts",
-        type=int,
-        default=None,
-        help=f"单条用例 LLM 接管最大轮次（默认 {MAX_CASE_TAKEOVER_TURNS}）",
     )
     planner_group = parser.add_mutually_exclusive_group()
     planner_group.add_argument(
@@ -2005,25 +1503,6 @@ def main(argv: list[str] | None = None) -> int:
             "如确需兼容旧行为，请显式使用 --legacy-deterministic"
         )
 
-    recovery_command = (
-        args.recovery_agent_command
-        or os.environ.get("SIXGILL_RECOVERY_AGENT_COMMAND")
-        or ""
-    ).strip()
-    recovery_max_attempts = (
-        MAX_RUNTIME_AGENT_RECOVERY_ATTEMPTS
-        if args.recovery_max_attempts is None
-        else args.recovery_max_attempts
-    )
-    if recovery_max_attempts < 1 or recovery_max_attempts > 5:
-        raise ValueError("--recovery-max-attempts 必须在 1..5")
-    recovery_agent = None
-    llm_execution_policy = _EXECUTION_POLICY.get("llm_execution", {})
-    case_takeover_enabled = (
-        bool(llm_execution_policy.get("case_takeover_enabled", True))
-        if isinstance(llm_execution_policy, dict)
-        else True
-    )
     app_slug = args.app or infer_app_slug_from_profile(args.profile) or DEFAULT_APP_SLUG
     app_config = load_app_config(PROJECT_ROOT, app_slug, profile_path=args.profile)
     source_value = args.source or app_config.default_source
@@ -2140,38 +1619,16 @@ def main(argv: list[str] | None = None) -> int:
         manifest["agent_plan_required"] = False
         manifest["llm_plan_required"] = False
 
-    # One run has one logical Agent/model binding. The action-plan planner is
-    # the canonical default; prompt versions and transports stay role-specific,
-    # and explicit role-level environment overrides remain honored.
+    # Persist the planner/reviewer binding for audit and downstream review.
     agent_binding = resolve_agent_binding(action_plan_document)
-    if recovery_command:
-        recovery_agent = CommandRecoveryAgent(
-            recovery_command,
-            timeout_seconds=args.recovery_agent_timeout,
-            cwd=PROJECT_ROOT,
-            env=runtime_agent_environment(agent_binding),
-        )
-    runtime_recovery_enabled = (
-        recovery_agent is not None
-        and bool(args.action_plan)
-        and case_takeover_enabled
-    )
     manifest["agent_binding"] = agent_binding
-    runtime_binding = agent_binding["runtime_recovery"]
-    manifest["runtime_recovery"] = {
-        "enabled": runtime_recovery_enabled,
-        "provider": "external_agent_command" if runtime_recovery_enabled else "disabled",
-        "scope": "single_excel_row" if runtime_recovery_enabled else "disabled",
-        "mode": "until_case_terminal" if runtime_recovery_enabled else "disabled",
-        "agent": runtime_binding["agent"],
-        "model": runtime_binding["model"],
-        "agent_binding_source": runtime_binding["source"],
-        "transport": runtime_binding["transport"],
-        "max_attempts": recovery_max_attempts,
-        "max_recovery_actions": MAX_CASE_TAKEOVER_ACTIONS,
-        "timeout_seconds": args.recovery_agent_timeout,
-        "request_protocol": "agent_runtime_recovery@1.0",
-        "trace_file": "runtime_recovery_trace.jsonl",
+    manifest["blocked_retest"] = {
+        "enabled": bool(args.auto_retest_blocked and not queue_entries and not args.probe),
+        "strategy": "deferred_second_pass",
+        "status_buckets": ["blocked"],
+        "max_retest_rounds": 1,
+        "queue_file": "blocked_retest_queue.json",
+        "output_directory": "blocked-retest",
     }
 
     if queue_entries:
@@ -2254,7 +1711,6 @@ def main(argv: list[str] | None = None) -> int:
     session = ModuleSession()
     runtime_stats_path = output / "runtime_stats.json"
     write_runtime_stats(runtime_stats_path, session)
-    runtime_recovery_trace_path = output / "runtime_recovery_trace.jsonl"
 
     try:
         for module, page_group, case in execution_items:
@@ -2291,9 +1747,6 @@ def main(argv: list[str] | None = None) -> int:
                     action_ok = False
                     action_mode = "setup_failed"
                     error_detail = ""
-                    failure_phase = "setup"
-                    action_progress: dict[str, Any] = {}
-                    runtime_recovery_attempts: list[dict] = []
                     page_observation = "未获取到可用的页面观察"
                     observation = ""
                     elements: list[dict] = []
@@ -2339,16 +1792,11 @@ def main(argv: list[str] | None = None) -> int:
                                     action_events,
                                     action_case_plan.get("actions") or [],
                                     phase="本行操作",
-                                    progress=action_progress,
-                                    interruption_detector=(
-                                        transient_overlay_detail if runtime_recovery_enabled else None
-                                    ),
                                 )
                             else:
                                 action_ok, error_detail, action_mode = execute_action(
                                     action_events, sheet_name, row, case
                                 )
-                            failure_phase = "" if action_ok else "action"
                         else:
                             failed_setup = next(
                                 (
@@ -2359,51 +1807,13 @@ def main(argv: list[str] | None = None) -> int:
                                 "公共前置状态建立失败",
                             )
                             error_detail = f"{failed_setup}；未执行本行操作"
-                            failure_phase = "setup"
                         elements = screen_elements()
                         page_observation = summarize(elements)
                     except Exception as exc:
                         error_detail = str(exc)
                         action_ok = False
-                        failure_phase = "executor_exception"
                         event(action_events, "executor", f"{sheet_name}!{row}", "failed", error_detail)
                         page_observation = "未获取到可用的页面观察"
-
-                    if (
-                        runtime_recovery_enabled
-                        and action_case_plan is not None
-                        and (not setup_ok or not action_ok)
-                    ):
-                        recovery_outcome = run_runtime_agent_recovery(
-                            agent=recovery_agent,
-                            max_attempts=recovery_max_attempts,
-                            run_id=str(manifest.get("run_id") or ""),
-                            app_config=app_config,
-                            output=output,
-                            sheet_name=sheet_name,
-                            row=row,
-                            case=case,
-                            case_plan=action_case_plan,
-                            session=session,
-                            setup_events=setup_events,
-                            action_events=action_events,
-                            setup_ok=setup_ok,
-                            action_ok=action_ok,
-                            action_mode=action_mode,
-                            error_detail=error_detail,
-                            failure_phase=failure_phase,
-                            action_progress=action_progress,
-                            recovery_trace_path=runtime_recovery_trace_path,
-                            interruption_detector=transient_overlay_detail,
-                            max_total_recovery_actions=MAX_CASE_TAKEOVER_ACTIONS,
-                        )
-                        setup_ok = recovery_outcome.setup_ok
-                        action_ok = recovery_outcome.action_ok
-                        action_mode = recovery_outcome.action_mode
-                        error_detail = recovery_outcome.error_detail
-                        elements = recovery_outcome.elements
-                        page_observation = recovery_outcome.page_observation
-                        runtime_recovery_attempts = recovery_outcome.attempts
 
                     evidence_path = shots / f"{sheet_name}_row_{row:03d}.png"
                     shot_ok = take_shot(evidence_path)
@@ -2453,12 +1863,6 @@ def main(argv: list[str] | None = None) -> int:
                         probe=args.probe,
                         agent_plan=bool(args.action_plan),
                     )
-                    if runtime_recovery_attempts:
-                        recovery_summary = (
-                            f"运行时 Agent 已介入 {len(runtime_recovery_attempts)} 次并"
-                            + ("恢复后完成重试" if setup_ok and action_ok else "仍未恢复")
-                        )
-                        judgment_reason = f"{judgment_reason}；{recovery_summary}"
                     observation = build_actual(
                         action_events,
                         elements,
@@ -2516,20 +1920,6 @@ def main(argv: list[str] | None = None) -> int:
                             "actions": action_case_plan.get("actions") or [],
                             "expected_observations": action_case_plan.get("expected_observations") or [],
                         }
-                    if runtime_recovery_attempts:
-                        record["runtime_recovery"] = {
-                            "enabled": True,
-                            "scope": "single_excel_row",
-                            "mode": "until_case_terminal",
-                            "attempt_count": len(runtime_recovery_attempts),
-                            "recovered": bool(setup_ok and action_ok),
-                            "terminal": "recovered" if setup_ok and action_ok else "blocked",
-                            "recovery_action_count": sum(
-                                int(attempt.get("recovery_action_count") or 0)
-                                for attempt in runtime_recovery_attempts
-                            ),
-                            "attempts": runtime_recovery_attempts,
-                        }
                     if args.probe:
                         record["probe"] = {
                             "navigation_only": True,
@@ -2570,7 +1960,6 @@ def main(argv: list[str] | None = None) -> int:
         journal.mark_paused(reason="执行记录持久化失败")
         rotate([], False)
         raise
-
     setup_trace.append(
         {
             "type": "runtime_policy",
@@ -2593,13 +1982,50 @@ def main(argv: list[str] | None = None) -> int:
         # Keep the conventional retest_results.py input name alongside the
         # journal's canonical execution_records.json.
         shutil.copy2(final_path, output / "retest_execution.json")
-    exception_queue = build_exception_queue({"cases": records})
+    execution_document = json.loads(final_path.read_text(encoding="utf-8"))
+    review_source_path = final_path
+    blocked_retest_summary: dict[str, Any] | None = None
+    if args.auto_retest_blocked and not queue_entries and not args.probe:
+        (
+            execution_document,
+            retested_path,
+            blocked_retest_summary,
+            retest_exit_code,
+        ) = _run_blocked_retest_once(
+            execution_document,
+            output=output,
+            app_slug=app_config.slug,
+            source=source,
+            profile=APP_PROFILE,
+            device=DEVICE,
+            action_plan=args.action_plan,
+            legacy_deterministic=bool(args.legacy_deterministic),
+        )
+        if retest_exit_code != 0:
+            rotate([], False)
+            print(
+                json.dumps(
+                    {
+                        "status": blocked_retest_summary.get("status", "failed"),
+                        "phase": "blocked_retest",
+                        "records": len(records),
+                        "output": str(output),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return retest_exit_code
+        if retested_path is not None:
+            review_source_path = retested_path
+
+    final_records = list(execution_document.get("cases") or [])
+    exception_queue = build_exception_queue({"cases": final_records})
     (output / "exception_queue.json").write_text(
         json.dumps(exception_queue, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     profile_feedback = build_profile_feedback(
-        {"cases": records},
+        {"cases": final_records},
         run_dir=output,
         app_slug=app_config.slug,
         app_version=str(plan.get("app_profile_context", {}).get("app_version") or "unknown"),
@@ -2608,18 +2034,27 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(profile_feedback, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    execution_document = json.loads(final_path.read_text(encoding="utf-8"))
     review_queue = build_review_queue(
         execution_document,
         run_dir=output,
-        source_path=final_path,
+        source_path=review_source_path,
     )
     (output / "llm_review_queue.json").write_text(
         json.dumps(review_queue, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     rotate([], False)
-    print(json.dumps({"manifest": manifest["expected_count"], "records": len(records), "output": str(final_path)}, ensure_ascii=False))
+    print(
+        json.dumps(
+            {
+                "manifest": manifest["expected_count"],
+                "records": len(final_records),
+                "output": str(review_source_path),
+                "blocked_retest": blocked_retest_summary,
+            },
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 

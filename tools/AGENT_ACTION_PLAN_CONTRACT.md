@@ -73,58 +73,28 @@
 于业务预期判断。业务结果必须由 Agent 读取执行后的截图、`page_observation`、
 `action_trace` 与 Excel `expected` 后写入逐行 `llm_reviews.json`。
 
-## 运行时异常恢复
+## 首轮阻塞项延迟复测
 
-正常路径执行时不会为每个动作再次调用 LLM。若目标页门禁、动作执行或
-App 配置的临时覆盖层信号触发异常，且启动执行器时提供了
-`--recovery-agent-command`（或设置 `SIXGILL_RECOVERY_AGENT_COMMAND`），
-执行器会进入当前 Excel 行的用例级接管，把当前行的 Excel 原文、原动作计划、
-失败轨迹、当前 UI 树、异常截图和此前接管轮次通过 stdin 交给该 Agent。Agent
-必须只返回一个 JSON 对象：
+完整执行默认启用 `--auto-retest-blocked`。首轮所有行完成后，执行器会在同一
+运行目录生成 `blocked_retest_queue.json`，只选择首轮状态为 `blocked` 的行，
+并在 `blocked-retest/` 子目录逐条重新执行一次。第二轮继续使用首轮已经校验的
+Agent action plan，但不调用运行时恢复 Agent；每条重新执行公共 setup，并产生
+新的截图、UI 观察和动作轨迹。第二轮结束后写入
+`execution_records.retested.json`，其中 `attempts` 保留首轮与复测两份记录，
+最终可见状态以第二轮为准。
 
-```json
-{
-  "schema_version": "1.0",
-  "plan_type": "agent_runtime_recovery",
-  "agent": {
-    "name": "实际使用的 Agent",
-    "model": "实际使用的模型",
-    "prompt_version": "agent-recovery-v1"
-  },
-  "decision": "retry_current_action",
-  "reset": "none",
-  "replay_safety": "safe",
-  "diagnosis": "检测到遮挡页面的临时弹窗",
-  "reason": "弹窗遮挡了目标控件，关闭后可重新确认目标页",
-  "actions": [
-    {"type": "tap_text", "text": "知道了"}
-  ]
-}
-```
+该流程最多运行一轮，不会递归复测。需要诊断首轮原始行为时可显式传入
+`--no-auto-retest-blocked`。如果首轮没有阻塞项，只写入状态为 `not_needed` 的
+`blocked_retest_summary.json`，不会再次启动 App。
 
-本次运行的 `agent_action_plan.planner.agent` 和 `planner.model` 是默认的
-Agent/model 绑定。执行器会将其传给运行时异常恢复和后续逐行复核；只有明确设置
-`SIXGILL_RUNTIME_AGENT_NAME/MODEL` 或 `SIXGILL_AGENT_NAME/MODEL` 时，才按角色覆盖。
-规划、恢复和复核仍使用各自的 `prompt_version`，并在执行清单中记录实际绑定来源。
+## 异常与复测
 
-`decision` 只能是 `retry_current_action`、`restart_case` 或 `blocked`；一次恢复
-动作完成不代表整条用例完成。执行器会继续执行原计划剩余动作；若再次发现
-弹窗、页面跑偏、超时或其他阻塞，会在同一个用例接管会话中再次调用 Agent，
-并把前面轮次的诊断、动作和结果一并带入上下文。
-`reset` 只能是 `none`、`module` 或 `cold_start`。恢复动作仍复用上述低层
-动作白名单，单轮最多 16 个；接管轮次默认最多 5 次、恢复动作总数最多 64 个。要求重试时必须明确
-`replay_safety: safe`，无法确认业务动作是否已经生效时必须返回 `blocked`。
-同一行的业务动作最多允许一次运行时重放；达到上限后即阻塞。
-执行器恢复后会重新通过原计划的目标页门禁，不能由 Agent 绕过硬门禁或修改
-本行预期页面。
-
-Agent 命令通过 stdin 接收请求，并且必须只在 stdout 输出 JSON；诊断日志请输出
-到 stderr。每次请求和响应会保存到运行目录的
-`runtime_recovery_trace.jsonl`，每行记录还会保存 `runtime_recovery` 和恢复截图。
-每次成功恢复还会在 `profile_feedback.json` 的 `recovery_candidates` 中留下
-`diagnosis`、`recovery_actions`、恢复截图、目标页观察和重试轨迹；这类记录是
-画像候选，不会自动覆盖正式 `profile.yaml`。
-
+执行器不会为单个动作启动第二个运行时 Agent。目标页恢复只允许消费
+action plan 中已校验的 `recovery_navigation`；动作、页面门禁或证据失败会写入
+逐行轨迹和异常队列。完整运行首轮结束后，默认将 `blocked` 行放入
+`blocked_retest_queue.json)，在隔离的 `blocked-retest/` 目录中重新 setup 并复测一轮，
+再合并为 `execution_records.retested.json`。LLM 在测后读取截图、UI 树、轨迹和
+Excel 预期，生成逐行复核结论；复核不能覆盖确定性门禁。
 生成和校验：
 
 ```powershell

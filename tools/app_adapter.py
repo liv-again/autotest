@@ -214,22 +214,6 @@ class AppAdapter:
     def probe_canaries(self) -> tuple[tuple[str, int], ...]:
         return ()
 
-    @property
-    def transient_overlay_signals(self) -> tuple[str, ...]:
-        """Texts that are useful hints for runtime Agent recovery.
-
-        The executor does not assume that any label is a popup.  An App may
-        optionally declare a small set of high-signal texts in ``app.yaml``;
-        seeing one only triggers Agent analysis and never causes a blind tap.
-        """
-
-        configured = self.config.document.get("transient_overlay_signals")
-        if configured is None:
-            runtime_recovery = self.config.document.get("runtime_recovery")
-            if isinstance(runtime_recovery, Mapping):
-                configured = runtime_recovery.get("overlay_signals")
-        return _tuple_text(configured)
-
     def _runtime(self) -> Any:
         if self.runtime is None:
             raise AppAdapterError(f"{self.name} adapter 尚未绑定执行器 runtime")

@@ -1,4 +1,6 @@
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 from openpyxl import Workbook
 
@@ -255,6 +257,100 @@ def test_retest_queue_rejects_duplicate_rows(tmp_path):
         assert "重复用例" in str(exc)
     else:
         raise AssertionError("duplicate retest row should be rejected")
+
+
+def test_blocked_retest_command_disables_recursive_retest(tmp_path):
+    command = runner._blocked_retest_command(
+        app_slug="zhongyuan",
+        source=tmp_path / "cases.xlsx",
+        profile=tmp_path / "profile.yaml",
+        device="device-1",
+        output=tmp_path / "blocked-retest",
+        queue_path=tmp_path / "blocked_retest_queue.json",
+        action_plan=str(tmp_path / "agent_action_plan.json"),
+        legacy_deterministic=False,
+        resume=False,
+    )
+
+    assert "--retest-queue" in command
+    assert "--no-auto-retest-blocked" in command
+    assert "--resume" not in command
+
+
+def test_blocked_retest_runs_once_and_merges(tmp_path, monkeypatch):
+    def case(row, status, result, evidence):
+        reason = f"判定为{status}。{result}"
+        return {
+            "module": "股指",
+            "sheet": "股指",
+            "row": row,
+            "case_id": f"股指-row-{row:03d}",
+            "case_name": f"TC-{row}",
+            "source_order": row - 1,
+            "execution_order": row - 1,
+            "status": status,
+            "actual": (
+                "AI执行步骤：\n1. 执行本行操作\n"
+                f"操作结果：\n{result}\n"
+                f"判断理由：{reason}"
+            ),
+            "judgment_reason": reason,
+            "action_trace": [
+                {
+                    "type": "tap",
+                    "target": f"row-{row}",
+                    "result": "failed" if status == "⛔阻塞" else "success",
+                }
+            ],
+            "evidence": [evidence],
+        }
+
+    initial = {
+        "schema_version": "2.0",
+        "cases": [
+            case(2, "⛔阻塞", "首轮未找到控件", "first/row-2.png"),
+            case(3, "✅通过", "首轮页面正确", "first/row-3.png"),
+        ],
+    }
+    def fake_run(command, *, cwd, check):
+        assert check is False
+        assert cwd == str(runner.PROJECT_ROOT)
+        child_output = Path(command[command.index("--output") + 1])
+        child_output.mkdir(parents=True, exist_ok=True)
+        retest = {
+            "schema_version": "2.0",
+            "cases": [
+                case(2, "✅通过", "第二轮重新进入后控件可见", "second/row-2.png")
+            ],
+        }
+        (child_output / "retest_execution.json").write_text(
+            json.dumps(retest, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    merged, merged_path, summary, exit_code = runner._run_blocked_retest_once(
+        initial,
+        output=tmp_path,
+        app_slug="zhongyuan",
+        source=tmp_path / "cases.xlsx",
+        profile=tmp_path / "profile.yaml",
+        device="device-1",
+        action_plan=str(tmp_path / "agent_action_plan.json"),
+        legacy_deterministic=False,
+    )
+
+    assert exit_code == 0
+    assert summary["planned"] == 1
+    assert summary["completed"] == 1
+    assert merged_path == tmp_path / "execution_records.retested.json"
+    assert merged["cases"][0]["status"] == "✅通过"
+    assert [attempt["phase"] for attempt in merged["cases"][0]["attempts"]] == [
+        "batch",
+        "single_case_retest",
+    ]
+    assert merged["cases"][1]["status"] == "✅通过"
 
 
 def test_detail_case_name_is_used_only_when_action_needs_detail():

@@ -52,34 +52,35 @@ def build_review_queue(
     cases: list[dict[str, Any]] = []
     records = _records(document)
     for record in _records(document):
-        cases.append(
-            {
-                "case_id": record.get("case_id"),
-                "sheet": record.get("sheet"),
-                "row": record.get("row"),
-                "source_order": record.get("source_order"),
-                "execution_order": record.get("execution_order"),
-                "page_group_id": record.get("page_group_id"),
-                "page_group_key": record.get("page_group_key"),
-                "navigation_context": record.get("navigation_context") or {},
-                "profile_hints": record.get("profile_hints") or [],
-                "case_name": record.get("case_name"),
-                "action": record.get("action"),
-                "expected": record.get("expected"),
-                "planning_mode": record.get("planning_mode"),
-                "action_plan_case": record.get("action_plan_case") or {},
-                "executor_status": record.get("status"),
-                "actual": record.get("actual") or record.get("observation"),
-                "page_observation": record.get("page_observation"),
-                "action_trace": record.get("action_trace") or [],
-                "runtime_recovery": record.get("runtime_recovery") or {},
-                "evidence": [
-                    str(path).replace("\\", "/")
-                    for path in (record.get("evidence") or record.get("evidence_paths") or [])
-                ],
-                "evidence_fingerprints": evidence_fingerprints(record, root),
-            }
-        )
+        review_case = {
+            "case_id": record.get("case_id"),
+            "sheet": record.get("sheet"),
+            "row": record.get("row"),
+            "source_order": record.get("source_order"),
+            "execution_order": record.get("execution_order"),
+            "page_group_id": record.get("page_group_id"),
+            "page_group_key": record.get("page_group_key"),
+            "navigation_context": record.get("navigation_context") or {},
+            "profile_hints": record.get("profile_hints") or [],
+            "case_name": record.get("case_name"),
+            "action": record.get("action"),
+            "expected": record.get("expected"),
+            "planning_mode": record.get("planning_mode"),
+            "action_plan_case": record.get("action_plan_case") or {},
+            "executor_status": record.get("status"),
+            "actual": record.get("actual") or record.get("observation"),
+            "page_observation": record.get("page_observation"),
+            "action_trace": record.get("action_trace") or [],
+            "evidence": [
+                str(path).replace("\\", "/")
+                for path in (record.get("evidence") or record.get("evidence_paths") or [])
+            ],
+            "evidence_fingerprints": evidence_fingerprints(record, root),
+        }
+        # Read old runs without emitting an empty legacy field for new runs.
+        if record.get("runtime_recovery"):
+            review_case["runtime_recovery"] = record["runtime_recovery"]
+        cases.append(review_case)
     evidence_items = evidence_manifest(records, root)
     reviewer_default = reviewer_default_from_document(
         document if isinstance(document, Mapping) else None
@@ -108,7 +109,7 @@ def build_review_queue(
             else None
         ),
         "llm_instruction": (
-            "逐条读取 expected、navigation_context、action_plan_case、action_trace、runtime_recovery、page_observation 和 evidence 截图。"
+            "逐条读取 expected、navigation_context、action_plan_case、action_trace、page_observation 和 evidence 截图。"
             "先判断截图是否为目标页面，再判断动作效果和预期结果。不要根据 executor_status 直接通过，"
             "也不能用 LLM 结果覆盖确定性页面/动作阻塞。每项必须返回 JSON；reason 必须是非空的具体判断理由，"
             "并会被回填到 AI实测结果的‘判断理由’段落。默认使用 review_agent_default 中的 Agent 和 model；"

@@ -34,21 +34,22 @@ def build_exception_queue(document: dict[str, Any] | list[Any]) -> dict[str, Any
         bucket = status_bucket(record.get("status"))
         if bucket not in EXCEPTION_BUCKETS:
             continue
-        exceptions.append(
-            {
-                "exception_id": record.get("case_id") or f"{record.get('sheet')}!{record.get('row')}",
-                "sheet": record.get("sheet"),
-                "row": record.get("row"),
-                "source_order": record.get("source_order"),
-                "execution_order": record.get("execution_order"),
-                "case_name": record.get("case_name"),
-                "status": record.get("status"),
-                "actual": record.get("actual") or record.get("observation"),
-                "blocked_reason": record.get("blocked_reason") or record.get("reason"),
-                "evidence": record.get("evidence") or record.get("evidence_paths") or [],
-                "runtime_recovery": record.get("runtime_recovery") or {},
-            }
-        )
+        exception = {
+            "exception_id": record.get("case_id") or f"{record.get('sheet')}!{record.get('row')}",
+            "sheet": record.get("sheet"),
+            "row": record.get("row"),
+            "source_order": record.get("source_order"),
+            "execution_order": record.get("execution_order"),
+            "case_name": record.get("case_name"),
+            "status": record.get("status"),
+            "actual": record.get("actual") or record.get("observation"),
+            "blocked_reason": record.get("blocked_reason") or record.get("reason"),
+            "evidence": record.get("evidence") or record.get("evidence_paths") or [],
+        }
+        # Read old runs without emitting an empty legacy field for new runs.
+        if record.get("runtime_recovery"):
+            exception["runtime_recovery"] = record["runtime_recovery"]
+        exceptions.append(exception)
     return {
         "schema_version": "1.0",
         "queue_type": "module_exception_review",

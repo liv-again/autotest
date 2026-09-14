@@ -301,12 +301,6 @@ def _run_command(args: argparse.Namespace) -> int:
         command.extend(["--action-plan", str(Path(args.action_plan).expanduser().resolve())])
     elif args.legacy_deterministic:
         command.append("--legacy-deterministic")
-    if args.recovery_agent_command:
-        command.extend(["--recovery-agent-command", args.recovery_agent_command])
-    if args.recovery_agent_timeout is not None:
-        command.extend(["--recovery-agent-timeout", str(args.recovery_agent_timeout)])
-    if args.recovery_max_attempts is not None:
-        command.extend(["--recovery-max-attempts", str(args.recovery_max_attempts)])
     print(json.dumps({"queue": str(queue_path), "cases": len(document["cases"]), "runner": str(runner)}, ensure_ascii=False))
     return subprocess.run(command, check=False).returncode
 
@@ -330,22 +324,6 @@ def main(argv: list[str] | None = None) -> int:
         "--legacy-deterministic",
         action="store_true",
         help="显式使用旧版固定规则，仅作迁移/诊断",
-    )
-    run_parser.add_argument(
-        "--recovery-agent-command",
-        help="转发给执行器的运行时异常恢复 Agent 命令",
-    )
-    run_parser.add_argument(
-        "--recovery-agent-timeout",
-        type=float,
-        default=None,
-        help="转发给执行器的运行时 Agent 超时时间（秒）",
-    )
-    run_parser.add_argument(
-        "--recovery-max-attempts",
-        type=int,
-        default=None,
-        help="转发给执行器的单条用例最大 Agent 恢复次数",
     )
     run_parser.set_defaults(handler=_run_command)
 

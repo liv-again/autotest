@@ -13,8 +13,6 @@
     "device": {"type": "string"},
     "module_roots": {"type": "object"},
     "probe_canaries": {"type": "array"},
-    "transient_overlay_signals": {"type": "array", "items": {"type": "string"}},
-    "runtime_recovery": {"type": "object"},
     "verified_versions": {"type": "array", "items": {"type": "object", "required": ["version", "verified_at"]}},
     "compatibility": {"type": "object", "required": ["min", "max_exclusive"]},
     "test_accounts": {"type": "array", "items": {"type": "object", "required": ["alias", "type", "mask"]}},

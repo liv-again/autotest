@@ -38,14 +38,6 @@ llm_execution:
   execution_context: page_group
   action_scope: single_excel_row
   result_review_scope: single_excel_row
-  exception_replan_scope: single_excel_row
-  # Once a row hits a live UI exception, the Agent owns recovery for the
-  # entire row.  Each newly exposed blocker starts another bounded turn.
-  case_takeover_scope: single_excel_row
-  case_takeover_enabled: true
-  max_case_takeover_turns: 5
-  max_case_takeover_actions: 64
-  max_runtime_recovery_attempts: 5
   profile_feedback_scope: run
   require_screenshot_and_action_trace: true
   hard_gate_cannot_be_overridden: true
@@ -61,9 +53,6 @@ llm_execution:
   require_evidence_sha256: true
   require_agent_model: true
   require_prompt_version: true
-  runtime_recovery_transport: external_agent_command_stdio_json
-  runtime_recovery_rechecks_target_page: true
-  runtime_recovery_replay_requires_safe: true
 
 profile_feedback:
   enabled: true

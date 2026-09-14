@@ -17,7 +17,7 @@ description: AI 驱动 Android App 用 Excel 用例做业务自测——用户�
 3. **测前 · 备前置**：读前置任务产出的「本轮前置」清单（`本轮前置.yaml`/`.md`）——代码已解析/补齐；仍缺码 = 前置未完成，回前置任务。
 4. **测前 · 冻结 selection**：用前置任务的 `scope_hash` 冻结范围，可审计，不临场扩大。
 5. **测前 · 定 mode**：读 `apps/<app>/env.yaml` 走 `tools/safety/env_auth.verify_env`——**团队内自测默认走轻量档 `assurance_level: trusted_internal`**（已知模拟盘，声明即信任：未撤销 ∧ 是模拟盘 ∧ 测对 app/版本 → `simulated_submit`，**无需 HMAC 签名/署名/有效期**）；`operator_attested`/`technical_verified` 是**严格路径（休眠，供将来测真账户/生产）**，另需签名+真实署名+有效期。任一基础卫生不符或 `revoked:true` → **自动回退 `confirm_only`**。生成本轮安全约束（缺失/hash 不符 → 拒启下单）。
-6. **测中 · 驱动 + 取证**：照 `references/workflow.md` 的工作流（模块级规划→页面级分组→组内复用导航→按 Excel 行号逐条驱动→行级页面/结果验证→独立截图→逐条落盘→回填）执行；下单类经 `tools/safety/submit_guard.py` 硬校验，`simulated_submit` 模式下走撤单闭环。LLM 在模块/页面组规划、组内执行决策、行级结果复核和异常行重规划中参与，但硬页面门禁不能被 LLM 覆盖。
+6. **测中 · 驱动 + 取证**：照 `references/workflow.md` 的工作流（模块级规划→页面级分组→组内复用导航→按 Excel 行号逐条驱动→行级页面/结果验证→独立截图→逐条落盘→回填）执行；下单类经 `tools/safety/submit_guard.py` 硬校验，`simulated_submit` 模式下走撤单闭环。LLM 在模块/页面组规划、组内执行决策和行级结果复核中参与，但硬页面门禁不能被 LLM 覆盖。
 7. **测后 · 结构化反哺**：结束快照+残留校验后，用 `tools/reback.py` 的 `reback_run`（按声明标识字段 upsert，写盘前 schema 校验）把本轮结果合回 `profile.yaml`/`prerequisites.yaml`（带 `last_verified`+`evidence_run`），再用 `tools/derive_docs.py` 重新派生 `画像.md`/`前置条件.md`/`速览.md`；跑 `tools/lint_profile.py` 查重复/跨产物复制/stale/漂移；`tools/metrics.py` 记本批 output/上下文税。
 
 ## 执行分工与硬约束
@@ -32,9 +32,9 @@ description: AI 驱动 Android App 用 Excel 用例做业务自测——用户�
 - **冷启动边界**：模块切换、App 崩溃/卡死、页面状态无法在有限返回次数内恢复时才允许 `force-stop + launch`；不能把冷启动作为每条用例的默认前置。
 - **动作失败口径**：未识别动作、控件未找到、前置页不符或断言未完成时标记 `⛔阻塞`/`🟡待验证`；禁止用 `observe` 兜底后判定通过；同一动作最多自动重试 1 次。
 - **逐条恢复**：每条完成后立即追加 `execution_records.jsonl` 并更新 `execution_state.json`；暂停后只补跑未完成行，不读取旧结果补齐当前轮次。
-- **异常集中分析**：模块完成后生成 `exception_queue.json`，只把失败/阻塞/待验证/低置信度记录交给 LLM 分析；目标页校验失败允许一次运行时重新规划，恢复仍失败才阻塞。
-- **画像反哺**：运行结束生成 `profile_feedback.json`，由 LLM 根据证据审核导航上下文、页面特征和恢复路径；候选必须经过 `reback_run`、schema 和 lint 后才能升级到正式画像，单次异常不得直接覆盖。
-- **复测边界**：首轮结束后对未通过用例逐条复测一轮；复测仍不通过就保留最终状态，不自动无限复测。
+- **异常集中分析**：模块完成后生成 `exception_queue.json`，只把失败/阻塞/待验证/低置信度记录交给 LLM 分析；LLM 复核不能覆盖确定性页面/动作门禁。
+- **画像反哺**：运行结束生成 `profile_feedback.json`，由 LLM 根据证据审核导航上下文和页面特征；候选必须经过 `reback_run`、schema 和 lint 后才能升级到正式画像，单次异常不得直接覆盖。
+- **复测边界**：完整执行首轮结束后默认自动对阻塞用例逐条复测一轮；复测仍阻塞就保留最终状态，不自动无限复测。LLM 复核后的其他未通过状态可按需显式生成通用复测队列。
 
 ## 结果回填（测后必须执行）
 
@@ -74,7 +74,9 @@ python tools/profile_feedback.py --input <run>/results.reviewed.json --out <run>
 
 LLM 复核必须先判断目标页面，再判断动作效果和预期结果；确定性阻塞不能被覆盖。`llm_reviews.json` 必须绑定本次运行、当前队列、执行记录摘要和截图摘要，并记录 Agent、模型和提示词版本；不满足时不得合并。详细契约见 `tools/LLM_REVIEW_CONTRACT.md`。画像候选由执行器生成到 `profile_feedback.json`，只有审核后才允许通过 `reback_run` 反哺正式画像。
 
-一个 sheet 或模块的首轮测试结束后，先对所有未通过用例做逐条复测。`retest_results.py plan` 默认选择 `fail/partial/blocked/pending/other`，排除 `pass` 和 `☑不适用`；执行器必须按队列一次只跑一个用例，每条复测都重新执行公共 setup，并把新的页面观察和 evidence 写入复测结果，不能把 setup 轨迹写进 `actual`：
+完整执行默认启用 `--auto-retest-blocked`：一个 sheet 或模块的首轮结束后，执行器在当前运行目录生成 `blocked_retest_queue.json`，只把首轮 `blocked` 用例放入 `blocked-retest/` 子目录逐条复测一次，并生成 `execution_records.retested.json`。第二轮继续使用已校验的 action plan，每条都重新执行公共 setup，并写入新的页面观察和 evidence。需要查看未经复测的原始首轮时可传 `--no-auto-retest-blocked`。
+
+如果 LLM 复核后还需要复测 `fail/partial/pending/other` 等状态，可显式使用通用 `retest_results.py` 流程；它默认选择所有未通过状态，排除 `pass` 和 `☑不适用`：
 
 ```bash
 python tools/retest_results.py plan --results <run>/results.json --scope sheet --scope-name <工作表名> --out <run>/retest_queue.json

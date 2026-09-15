@@ -55,6 +55,26 @@ from tools.retest_results import (
 from tools.results_quality import append_judgment_reason
 
 
+# The desktop image still exposes Python 3.7 for the subprocess launched by
+# the deferred blocked-retest phase.  Keep the native BooleanOptionalAction
+# when available, and provide the same --flag/--no-flag contract on older
+# argparse versions so a completed first pass can resume safely.
+if not hasattr(argparse, "BooleanOptionalAction"):
+    class _BooleanOptionalAction(argparse.Action):
+        def __init__(self, option_strings, dest, default=None, **kwargs):
+            expanded = []
+            for option_string in option_strings:
+                expanded.append(option_string)
+                if option_string.startswith("--"):
+                    expanded.append("--no-" + option_string[2:])
+            super().__init__(expanded, dest, nargs=0, const=None, default=default, **kwargs)
+
+        def __call__(self, parser, namespace, values, option_string=None):
+            setattr(namespace, self.dest, not str(option_string or "").startswith("--no-"))
+
+    argparse.BooleanOptionalAction = _BooleanOptionalAction
+
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_APP_SLUG = "guotou"
 DEFAULT_DEVICE = "c923178d"

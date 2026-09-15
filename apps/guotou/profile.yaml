@@ -51,15 +51,15 @@ entries:
   status: verified
 - key: quote.kline
   path: 行情列表→任一股票→个股分时页左滑可切换至K线页面；也可点击分时图全屏入口；横屏周期：分时/5日/日K/周K/月K/分钟；右上角X返回；竖屏底栏：周期/指标/更多
-  last_verified: '2026-09-01'
+  last_verified: '2026-09-15'
   app_version: V10.5.4
-  evidence_run: user-confirmed/2026-09-01
+  evidence_run: output/2026-09-15-guotou-generic-navigation-full
   status: verified
 - key: quote.sector_lists
   path: 行情→板块→行业板块更多→板块列表；顶部可切换全部板块/行业板块/概念板块/地域板块；右上角搜索；表头涨幅/领涨股/涨速可交互
-  last_verified: '2026-09-08'
+  last_verified: '2026-09-15'
   app_version: V10.5.4
-  evidence_run: output/2026-09-08-guotou-six-sheets
+  evidence_run: output/2026-09-15-guotou-generic-navigation-full
   status: verified
 - key: quote.other_market_lists
   path: 行情→其他；全球市场→国内期货/外汇/港股；基金→沪深封闭/上证封闭/深证封闭/±20%基金；个股→上证A/B/深证A/B/北证A/创业板/科创板/三板/风险警示/退市整理；债券→通用回购逆回购/沪深债券/上证债券/深证债券
@@ -99,15 +99,15 @@ entries:
   status: verified
 - key: quote.stock_detail_extended
   path: 行情列表→个股分时；顶部搜索；行情头部点击展开数据；资讯栏右箭头展开盘口/公告/简况/财务/研报；底部更多进入筹码分布/投资图谱/图解财报/设置
-  last_verified: '2026-08-27'
+  last_verified: '2026-09-15'
   app_version: V10.5.4
-  evidence_run: outputs/2026-08-27-guotou-full/shots-r3
+  evidence_run: output/2026-09-15-guotou-generic-navigation-full
   status: verified
 - key: quote.fund_flow_extended
   path: 行情→看资金；顶部切换自选/沪深京/行业/概念，列表表头可排序；支持横竖屏
-  last_verified: '2026-09-08'
+  last_verified: '2026-09-15'
   app_version: V10.5.4
-  evidence_run: output/2026-09-08-guotou-six-sheets
+  evidence_run: output/2026-09-15-guotou-generic-navigation-full
   status: verified
 - key: quote.hk_connect_hkgt_sh
   path: 行情→港股→沪、深港通→港股通；港股通(沪)额度及资金流入可见；港股通(沪)列表支持更多进入独立列表、股票详情、滚动和涨幅排序

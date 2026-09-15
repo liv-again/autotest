@@ -78,7 +78,7 @@
 完整执行默认启用 `--auto-retest-blocked`。首轮所有行完成后，执行器会在同一
 运行目录生成 `blocked_retest_queue.json`，只选择首轮状态为 `blocked` 的行，
 并在 `blocked-retest/` 子目录逐条重新执行一次。第二轮继续使用首轮已经校验的
-Agent action plan，但不调用运行时恢复 Agent；每条重新执行公共 setup，并产生
+Agent action plan；每条重新执行公共 setup，并产生
 新的截图、UI 观察和动作轨迹。第二轮结束后写入
 `execution_records.retested.json`，其中 `attempts` 保留首轮与复测两份记录，
 最终可见状态以第二轮为准。
@@ -92,7 +92,7 @@ Agent action plan，但不调用运行时恢复 Agent；每条重新执行公共
 执行器不会为单个动作启动第二个运行时 Agent。目标页恢复只允许消费
 action plan 中已校验的 `recovery_navigation`；动作、页面门禁或证据失败会写入
 逐行轨迹和异常队列。完整运行首轮结束后，默认将 `blocked` 行放入
-`blocked_retest_queue.json)，在隔离的 `blocked-retest/` 目录中重新 setup 并复测一轮，
+`blocked_retest_queue.json`，在隔离的 `blocked-retest/` 目录中重新 setup 并复测一轮，
 再合并为 `execution_records.retested.json`。LLM 在测后读取截图、UI 树、轨迹和
 Excel 预期，生成逐行复核结论；复核不能覆盖确定性门禁。
 生成和校验：

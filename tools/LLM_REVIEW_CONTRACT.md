@@ -41,7 +41,7 @@ Agent 计划产生的成功动作不会直接变成通过。执行器先记录�
 队列中的 `review_agent_default` 来自本次 `agent_action_plan.json` 的
 `planner.agent`/`planner.model`。复核 Agent 默认应使用该 Agent 和模型；如果明确
 使用了不同的 Agent 或模型，必须在 `llm_reviews.json.agent` 中记录实际值。规划、
-运行时恢复和复核的 prompt_version 可以不同，因为三者承担的任务不同。
+规划和复核的 prompt_version 可以不同，因为两者承担的任务不同。
 
 ## 运行链路
 

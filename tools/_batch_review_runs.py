@@ -49,16 +49,30 @@ def _review_for(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def process(run_dir: Path) -> None:
-    execution_path = run_dir / "execution_records.json"
     queue_path = run_dir / "llm_review_queue.json"
-    if not execution_path.is_file() or not queue_path.is_file():
+    if not queue_path.is_file():
+        return
+    queue = json.loads(queue_path.read_text(encoding="utf-8"))
+    source_execution = queue.get("source_execution_path")
+    if isinstance(source_execution, str) and source_execution.strip():
+        execution_path = Path(source_execution)
+        if not execution_path.is_absolute():
+            execution_path = run_dir / execution_path
+    else:
+        execution_path = run_dir / "execution_records.json"
+    if not execution_path.is_file():
+        # Older queues did not persist source_execution_path.  Prefer the
+        # retested document when present, then fall back to the first pass.
+        execution_path = run_dir / "execution_records.retested.json"
+    if not execution_path.is_file():
+        execution_path = run_dir / "execution_records.json"
+    if not execution_path.is_file():
         return
     document = json.loads(execution_path.read_text(encoding="utf-8"))
-    queue = json.loads(queue_path.read_text(encoding="utf-8"))
     reviewer_default = reviewer_default_from_document(queue) or {}
-    agent_name = os.environ.get("SIXGILL_AGENT_NAME") or reviewer_default.get("agent") or "configured-agent"
-    agent_model = os.environ.get("SIXGILL_AGENT_MODEL") or reviewer_default.get("model") or "configured-model"
-    prompt_version = os.environ.get("SIXGILL_AGENT_PROMPT_VERSION", "row-review-v1")
+    agent_name = os.environ.get("SIXGILL_REVIEW_AGENT_NAME") or reviewer_default.get("agent") or "configured-agent"
+    agent_model = os.environ.get("SIXGILL_REVIEW_MODEL") or reviewer_default.get("model") or "configured-model"
+    prompt_version = os.environ.get("SIXGILL_REVIEW_PROMPT_VERSION", "row-review-v1")
     reviews = {
         "schema_version": "1.0",
         "review_scope": "single_excel_row",

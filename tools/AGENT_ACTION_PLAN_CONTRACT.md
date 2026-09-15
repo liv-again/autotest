@@ -77,11 +77,12 @@
 
 完整执行默认启用 `--auto-retest-blocked`。首轮所有行完成后，执行器会在同一
 运行目录生成 `blocked_retest_queue.json`，只选择首轮状态为 `blocked` 的行，
-并在 `blocked-retest/` 子目录逐条重新执行一次。第二轮继续使用首轮已经校验的
-Agent action plan；每条重新执行公共 setup，并产生
-新的截图、UI 观察和动作轨迹。第二轮结束后写入
-`execution_records.retested.json`，其中 `attempts` 保留首轮与复测两份记录，
-最终可见状态以第二轮为准。
+并在 `blocked-retest/` 子目录逐条重新执行一次。兼容模式继续使用首轮已经校验的
+Agent action plan；若显式传入 `--llm-retest`，则每条由独立的 retester 会话重新读取
+原始 Excel 用例、App 画像和实时截图/UI 树，逐步返回并执行一个低层动作，旧计划只作
+历史审计参考。两种模式都会重新执行公共 setup、产生新的截图/UI 观察和动作轨迹。
+第二轮结束后写入 `execution_records.retested.json`，其中 `attempts` 保留首轮与复测
+两份记录，最终可见状态以第二轮为准。
 
 该流程最多运行一轮，不会递归复测。需要诊断首轮原始行为时可显式传入
 `--no-auto-retest-blocked`。如果首轮没有阻塞项，只写入状态为 `not_needed` 的
@@ -89,12 +90,31 @@ Agent action plan；每条重新执行公共 setup，并产生
 
 ## 异常与复测
 
-执行器不会为单个动作启动第二个运行时 Agent。目标页恢复只允许消费
-action plan 中已校验的 `recovery_navigation`；动作、页面门禁或证据失败会写入
-逐行轨迹和异常队列。完整运行首轮结束后，默认将 `blocked` 行放入
-`blocked_retest_queue.json`，在隔离的 `blocked-retest/` 目录中重新 setup 并复测一轮，
-再合并为 `execution_records.retested.json`。LLM 在测后读取截图、UI 树、轨迹和
-Excel 预期，生成逐行复核结论；复核不能覆盖确定性门禁。
+首轮执行器不会为单个动作启动第二个运行时 Agent；目标页恢复只允许消费 action plan
+中已校验的 `recovery_navigation`。如果阻塞队列显式启用 `--llm-retest`，则进入
+`tools/agent_session.py` 定义的独立桌面 Agent 会话：它逐轮读取原始 Excel、画像、
+当前截图/UI 树和上一轮事实，决定一个动作并等待新的观察，再继续规划。规划、复测、
+复核默认使用同一 Agent/model 绑定，但 session_id 不同；复核会话始终只读，不能继续
+操作设备。动作、页面门禁或证据失败会写入逐行轨迹和异常队列。完整运行首轮结束后，
+默认将 `blocked` 行放入 `blocked_retest_queue.json`，在隔离的 `blocked-retest/`
+目录中重新 setup 并复测一轮，再合并为 `execution_records.retested.json`。LLM 在测后
+读取截图、UI 树、轨迹和 Excel 预期，生成逐行复核结论；复核不能覆盖确定性门禁。
+
+### 规划、复测和复核的会话绑定
+
+`execution_manifest.agent_binding` 记录三个角色的 Agent、模型、提示词版本和会话策略：
+
+| 角色 | 默认 Agent/model 来源 | 会话边界 |
+| --- | --- | --- |
+| `planner` | action plan 的 `planner` | 每个 Sheet/模块新会话 |
+| `retester` | 继承 planner；可用 `SIXGILL_RETEST_AGENT_NAME`/`SIXGILL_RETEST_MODEL` 显式覆盖 | 每条复测用例新会话 |
+| `reviewer` | 继承 planner；可用 `SIXGILL_REVIEW_AGENT_NAME`/`SIXGILL_REVIEW_MODEL` 显式覆盖 | 独立只读会话 |
+
+桌面宿主通过 `SIXGILL_AGENT_SESSION_FACTORY=module:function` 或进程内注册
+`register_agent_session_factory()` 提供会话实现。完整运行的自动延迟复测在独立子进程中执行，
+因此必须使用环境变量；进程内注册适用于嵌入式 runner 或显式复测队列。核心执行器不启动
+CLI、不调用 provider SDK，也不会把规划会话继续用于复测或复核。
+
 生成和校验：
 
 ```powershell

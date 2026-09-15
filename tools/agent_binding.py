@@ -1,8 +1,9 @@
-"""Resolve the Agent/model binding shared by one execution run.
+"""Resolve Agent/model bindings for the three execution roles.
 
-The action plan is the canonical source for the logical Agent and model. The
-row-review queue inherits that binding unless a reviewer-specific environment
-override is explicitly supplied.
+The action plan is the canonical source for the logical Agent and model.  The
+retester and row-reviewer inherit that binding by default, but each role is
+started in a fresh session.  This module records identity/configuration only;
+it never starts an Agent transport or imports a provider-specific runtime.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from typing import Any
 
 DEFAULT_REVIEW_NAME = "configured-agent"
 DEFAULT_REVIEW_MODEL = "configured-model"
+DEFAULT_RETEST_PROMPT_VERSION = "row-retest-v1"
 DEFAULT_REVIEW_PROMPT_VERSION = "row-review-v1"
 
 
@@ -48,11 +50,14 @@ def resolve_agent_binding(
     *,
     environment: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Resolve planner and reviewer Agent metadata.
+    """Resolve planner, retester, and reviewer Agent metadata.
 
-    ``SIXGILL_AGENT_*`` is a reviewer override. When absent, the reviewer
-    inherits the action-plan planner. The returned mapping is safe to persist;
-    it does not contain the process environment.
+    ``SIXGILL_AGENT_*`` is only a global fallback when the plan does not carry
+    the actual planner identity.  Once a plan has an explicit planner, both
+    retester and reviewer inherit it by default.  Role-specific overrides are
+    opt-in through ``SIXGILL_RETEST_*`` and ``SIXGILL_REVIEW_*``.  The returned
+    mapping is safe to persist; it does not contain the process environment or
+    a live session handle.
     """
 
     env: Mapping[str, Any] = environment if environment is not None else os.environ
@@ -67,13 +72,23 @@ def resolve_agent_binding(
     canonical_prompt = planner_prompt or "planner-unknown"
     canonical_source = "action_plan.planner" if planner_agent and planner_model else "environment/default"
 
-    review_agent_override = _env_text(env, "SIXGILL_AGENT_NAME")
-    review_model_override = _env_text(env, "SIXGILL_AGENT_MODEL")
+    review_agent_override = _env_text(env, "SIXGILL_REVIEW_AGENT_NAME")
+    review_model_override = _env_text(env, "SIXGILL_REVIEW_MODEL")
     review_agent = review_agent_override or canonical_agent
     review_model = review_model_override or canonical_model
     review_source = (
         "explicit_environment"
         if review_agent_override or review_model_override
+        else canonical_source
+    )
+
+    retest_agent_override = _env_text(env, "SIXGILL_RETEST_AGENT_NAME")
+    retest_model_override = _env_text(env, "SIXGILL_RETEST_MODEL")
+    retest_agent = retest_agent_override or canonical_agent
+    retest_model = retest_model_override or canonical_model
+    retest_source = (
+        "explicit_environment"
+        if retest_agent_override or retest_model_override
         else canonical_source
     )
 
@@ -84,18 +99,29 @@ def resolve_agent_binding(
             canonical_model,
             canonical_prompt,
             source=canonical_source,
+            session_policy="new_per_role",
         ),
         "planner": _role(
             planner_agent or canonical_agent,
             planner_model or canonical_model,
             planner_prompt or canonical_prompt,
             source="action_plan.planner" if planner_agent and planner_model else canonical_source,
+            session_policy="new_per_module",
+        ),
+        "retester": _role(
+            retest_agent,
+            retest_model,
+            DEFAULT_RETEST_PROMPT_VERSION,
+            source=retest_source,
+            session_policy="new_per_case",
         ),
         "reviewer": _role(
             review_agent,
             review_model,
             DEFAULT_REVIEW_PROMPT_VERSION,
             source=review_source,
+            session_policy="new_readonly",
+            readonly=True,
         ),
     }
 

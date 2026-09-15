@@ -33,15 +33,20 @@ python tools/_run_three_sheets.py `
 ```
 
 Full runs automatically retest first-pass blocked rows once under
-`output/guojin-run/blocked-retest`. The second pass reuses the validated
-action plan, starts with fresh setup, and merges both attempts into
-`execution_records.retested.json`.
+`output/guojin-run/blocked-retest`. The compatibility second pass reuses the
+validated action plan. To let the LLM re-understand and drive each blocked row,
+add `--llm-retest`; that mode starts a fresh retester session per row, sends the
+original Excel facts plus live screenshot/UI-tree observations, and treats the
+old plan as audit-only. Both modes start with fresh setup and merge both
+attempts into `execution_records.retested.json`.
 Use `--no-auto-retest-blocked` only when inspecting the raw first pass.
 
-The executor consumes only the validated low-level actions in the
-Agent action plan. Runtime execution does not start a second Agent transport;
-exceptional rows are recorded in the evidence and exception queues for
-post-run LLM review.
+The first-pass executor consumes only the validated low-level actions in the
+Agent action plan. In `--llm-retest` mode, the retest loop uses the
+provider-neutral `tools/agent_session.py` boundary and a separate desktop
+session; the core never starts a CLI/provider-specific transport. Exceptional
+rows are recorded in the evidence and exception queues for a separate,
+read-only LLM review session.
 
 `--legacy-deterministic` is intentionally available only to an App that
 explicitly implements legacy hooks. The Guotou compatibility parser now lives

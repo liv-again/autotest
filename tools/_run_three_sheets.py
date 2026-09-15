@@ -10,6 +10,8 @@ from __future__ import annotations
 import datetime
 import argparse
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +32,12 @@ from tools.execution_gate import load_execution_policy
 from tools.module_planner import build_module_plan
 from tools.agent_plan import AgentPlanError, load_action_plan, sha256_file
 from tools.agent_binding import resolve_agent_binding
+from tools.agent_session import (
+    FACTORY_ENV,
+    create_agent_session,
+    session_factory_available,
+)
+from tools.llm_retest import RetestLimits, run_retest_case
 from tools.app_adapter import (
     AppAdapter,
     AppAdapterError,
@@ -1169,6 +1177,49 @@ def take_shot(path: Path) -> bool:
     return rc1 == 0 and rc2 == 0 and path.exists() and path.stat().st_size > 0
 
 
+def capture_retest_observation(
+    output: Path,
+    sheet_name: str,
+    row: int,
+    phase: str,
+    turn: int,
+) -> dict[str, Any]:
+    """Capture the fresh screenshot/UI tree supplied to the retest Agent."""
+
+    safe_sheet = re.sub(r"[^0-9A-Za-z_\u4e00-\u9fff-]+", "_", str(sheet_name)).strip("_") or "sheet"
+    root = output / "retest-evidence" / f"{safe_sheet}_row_{int(row):03d}"
+    root.mkdir(parents=True, exist_ok=True)
+    shot_path = root / f"turn_{int(turn):03d}_{phase}.png"
+    tree_path = root / f"turn_{int(turn):03d}_{phase}.xml"
+    elements: list[dict] = []
+    errors: list[str] = []
+    try:
+        xml = droid.dump_xml(str(tree_path))
+        elements = droid.parse(xml)
+    except Exception as exc:
+        errors.append(f"UI树采集失败：{exc}")
+    shot_ok = take_shot(shot_path)
+    if not shot_ok:
+        errors.append("截图未生成或为空")
+    observation: dict[str, Any] = {
+        "phase": phase,
+        "turn": int(turn),
+        "screenshot": str(shot_path.resolve()).replace("\\", "/") if shot_ok else "",
+        "ui_tree": str(tree_path.resolve()).replace("\\", "/") if tree_path.is_file() else "",
+        "page_observation": summarize(elements),
+        "screenshot_ok": shot_ok,
+        "ui_tree_ok": tree_path.is_file(),
+        "evidence": [str(shot_path.resolve()).replace("\\", "/")] if shot_ok else [],
+    }
+    try:
+        observation["current_activity"] = droid.current()
+    except Exception as exc:
+        errors.append(f"前台页面读取失败：{exc}")
+    if errors:
+        observation["observation_error"] = "；".join(errors)
+    return observation
+
+
 def build_manifest(workbook: xlrd.book.Book, sheet_names: Iterable[str] | None = None) -> dict:
     selected_sheets = tuple(sheet_names or workbook.sheet_names())
     selected = []
@@ -1206,6 +1257,17 @@ def _load_retest_queue(path: Path) -> list[dict]:
     if not isinstance(document, dict) or not isinstance(document.get("cases"), list):
         raise ValueError("复测队列必须是带 cases 列表的 JSON 对象")
 
+    queue_agent_binding = document.get("agent_binding")
+    if not isinstance(queue_agent_binding, Mapping):
+        queue_manifest = document.get("execution_manifest")
+        queue_agent_binding = (
+            queue_manifest.get("agent_binding")
+            if isinstance(queue_manifest, Mapping)
+            else None
+        )
+    queue_agent_binding = (
+        dict(queue_agent_binding) if isinstance(queue_agent_binding, Mapping) else {}
+    )
     entries: list[dict] = []
     seen: set[tuple[str, int]] = set()
     for index, item in enumerate(document["cases"], start=1):
@@ -1230,6 +1292,15 @@ def _load_retest_queue(path: Path) -> list[dict]:
                 "case_id": case_id,
                 "retest_order": int(item.get("retest_order") or index),
                 "initial_status": item.get("initial_status", ""),
+                "initial_bucket": item.get("initial_bucket", ""),
+                "initial_actual": item.get("initial_actual", ""),
+                "initial_reason": item.get("reason", ""),
+                "initial_record": (
+                    dict(item.get("case"))
+                    if isinstance(item.get("case"), Mapping)
+                    else {}
+                ),
+                "agent_binding": dict(queue_agent_binding),
             }
         )
     entries.sort(key=lambda item: (int(item["retest_order"]), item["sheet"], int(item["row"])))
@@ -1329,8 +1400,9 @@ def _blocked_retest_command(
     action_plan: str | None,
     legacy_deterministic: bool,
     resume: bool,
+    llm_retest: bool = False,
 ) -> list[str]:
-    """Build the isolated second-pass command without live Agent recovery."""
+    """Build the isolated second-pass command."""
 
     command = [
         sys.executable,
@@ -1347,11 +1419,13 @@ def _blocked_retest_command(
         str(queue_path),
         "--no-auto-retest-blocked",
     ]
+    if llm_retest:
+        command.append("--llm-retest")
     if profile is not None:
         command.extend(["--profile", str(profile)])
-    if action_plan:
+    if action_plan and not llm_retest:
         command.extend(["--action-plan", str(Path(action_plan).expanduser().resolve())])
-    elif legacy_deterministic:
+    elif legacy_deterministic and not llm_retest:
         command.append("--legacy-deterministic")
     if resume:
         command.append("--resume")
@@ -1368,12 +1442,14 @@ def _run_blocked_retest_once(
     device: str,
     action_plan: str | None,
     legacy_deterministic: bool,
+    llm_retest: bool = False,
 ) -> tuple[dict[str, Any], Path | None, dict[str, Any], int]:
     """Retest first-pass blocked rows once and merge both attempts.
 
-    This deliberately starts a normal isolated executor process and reuses the
-    already validated Agent action plan. The child disables recursive blocked
-    retesting so the deferred second pass remains bounded to one round.
+    The child disables recursive blocked retesting so the deferred second pass
+    remains bounded to one round.  In ``llm_retest`` mode the old action plan
+    is retained only for binding/audit; the child asks a fresh retester session
+    to re-understand the original Excel row and choose each next action.
     """
 
     queue_document = plan_retests(
@@ -1389,6 +1465,7 @@ def _run_blocked_retest_once(
         "strategy": "deferred_second_pass",
         "status_buckets": ["blocked"],
         "max_retest_rounds": 1,
+        "mode": "llm_stepwise_fresh_session" if llm_retest else "validated_plan_replay",
         "planned": planned,
         "completed": 0,
         "queue": str(queue_path),
@@ -1410,6 +1487,7 @@ def _run_blocked_retest_once(
         queue_path=queue_path,
         action_plan=action_plan,
         legacy_deterministic=legacy_deterministic,
+        llm_retest=llm_retest,
         resume=resume,
     )
     try:
@@ -1494,6 +1572,16 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--llm-retest",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "阻塞复测时为每条用例创建新的 LLM retester 会话，重新读取原始 Excel、"
+            "App 画像和实时截图/UI树并逐步决定动作；不使用旧 action plan 作为动作来源；"
+            "显式 --retest-queue 时可省略旧 action plan"
+        ),
+    )
+    parser.add_argument(
         "--probe",
         action="store_true",
         help="导航探测模式：只执行 setup/目标页门禁/截图，不执行 Excel 业务动作",
@@ -1517,10 +1605,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if not args.action_plan and not args.legacy_deterministic:
+    if (
+        not args.action_plan
+        and not args.legacy_deterministic
+        and not (args.llm_retest and args.retest_queue and not args.probe)
+    ):
         raise ValueError(
             "必须提供 --action-plan。固定动作解析已不再是默认路径；"
-            "如确需兼容旧行为，请显式使用 --legacy-deterministic"
+            "如确需兼容旧行为，请显式使用 --legacy-deterministic；"
+            "LLM 复测模式可对显式 --retest-queue 省略旧 action plan"
         )
 
     app_slug = args.app or infer_app_slug_from_profile(args.profile) or DEFAULT_APP_SLUG
@@ -1563,6 +1656,28 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("--probe-queue 必须与 --probe 一起使用")
     queue_path = args.probe_queue if args.probe else args.retest_queue
     queue_entries = _load_retest_queue(Path(queue_path).expanduser().resolve()) if queue_path else []
+    stepwise_retest = bool(args.llm_retest and queue_entries and not args.probe)
+    llm_retest_requested = bool(
+        args.llm_retest
+        and not args.probe
+        and (queue_entries or args.auto_retest_blocked)
+    )
+    if llm_retest_requested and not session_factory_available():
+        raise ValueError(
+            "已请求 --llm-retest，但未配置 Agent session factory；"
+            "请由桌面 Agent 宿主注册 factory 或设置 SIXGILL_AGENT_SESSION_FACTORY=module:function"
+        )
+    if (
+        llm_retest_requested
+        and args.auto_retest_blocked
+        and not queue_entries
+        and not args.probe
+        and not str(os.environ.get(FACTORY_ENV) or "").strip()
+    ):
+        raise ValueError(
+            "自动 LLM 阻塞复测会在独立子进程中运行；请设置 "
+            f"{FACTORY_ENV}=module:function，进程内注册的 factory 不能跨子进程继承"
+        )
     queue_sheets = tuple(dict.fromkeys(entry["sheet"] for entry in queue_entries))
     if queue_entries and args.sheets:
         unexpected_sheets = sorted(set(queue_sheets).difference(args.sheets))
@@ -1607,7 +1722,24 @@ def main(argv: list[str] | None = None) -> int:
 
     action_plan_document: dict | None = None
     action_case_plans: dict[tuple[str, int, str], dict] = {}
-    if args.action_plan:
+    if args.action_plan and stepwise_retest:
+        # In stepwise mode an old plan is optional audit input.  Read only its
+        # planner identity; do not validate or expose its actions as a source
+        # of device operations.
+        reference_path = Path(args.action_plan).expanduser().resolve()
+        try:
+            reference_document = json.loads(reference_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"LLM 复测 action plan 审计文件不可读取: {reference_path}") from exc
+        if not isinstance(reference_document, dict):
+            raise ValueError("LLM 复测 action plan 审计文件必须是 JSON 对象")
+        planner = reference_document.get("planner")
+        planner = dict(planner) if isinstance(planner, Mapping) else {}
+        action_plan_document = {"planner": planner} if planner else None
+        plan["retest_action_plan_file"] = str(reference_path)
+        manifest["retest_action_plan_file"] = str(reference_path)
+        manifest["retest_action_plan_sha256"] = sha256_file(reference_path)
+    elif args.action_plan:
         action_plan_document, action_case_plans = load_action_plan(
             args.action_plan,
             cases=[case for _, _, case in execution_items],
@@ -1639,16 +1771,49 @@ def main(argv: list[str] | None = None) -> int:
         manifest["agent_plan_required"] = False
         manifest["llm_plan_required"] = False
 
-    # Persist the planner/reviewer binding for audit and downstream review.
-    agent_binding = resolve_agent_binding(action_plan_document)
+    if stepwise_retest:
+        # The old plan may be copied for audit and used to inherit the planner
+        # identity, but it is not an execution authority in this mode.
+        plan["planning_mode"] = "llm_stepwise_retest"
+        plan["planner_backend"] = "desktop_agent_retester"
+        manifest["planning_mode"] = "llm_stepwise_retest"
+        manifest["agent_plan_required"] = False
+        manifest["llm_plan_required"] = False
+        manifest["retest_action_plan_authority"] = "reference_only"
+        manifest["retest_agent_role"] = "retester"
+        manifest["app_profile_file"] = str(APP_PROFILE) if APP_PROFILE else ""
+        manifest["app_profile_sha256"] = sha256_file(APP_PROFILE) if APP_PROFILE else ""
+
+    # Persist the planner/retester/reviewer binding for audit and downstream
+    # review.  A direct LLM retest may omit the old plan; in that case inherit
+    # the first-pass binding carried by the queue, if present.
+    binding_source: Mapping[str, Any] | None = action_plan_document
+    if stepwise_retest and action_plan_document is None:
+        queue_binding = next(
+            (
+                entry.get("agent_binding")
+                for entry in queue_entries
+                if isinstance(entry.get("agent_binding"), Mapping)
+                and entry.get("agent_binding")
+            ),
+            None,
+        )
+        if isinstance(queue_binding, Mapping):
+            planner_binding = queue_binding.get("planner")
+            if isinstance(planner_binding, Mapping):
+                binding_source = {"planner": dict(planner_binding)}
+    agent_binding = resolve_agent_binding(binding_source)
     manifest["agent_binding"] = agent_binding
     manifest["blocked_retest"] = {
         "enabled": bool(args.auto_retest_blocked and not queue_entries and not args.probe),
-        "strategy": "deferred_second_pass",
+        "strategy": "deferred_llm_stepwise" if args.llm_retest else "deferred_second_pass",
         "status_buckets": ["blocked"],
         "max_retest_rounds": 1,
         "queue_file": "blocked_retest_queue.json",
         "output_directory": "blocked-retest",
+    }
+    queue_context_by_key = {
+        (str(entry["sheet"]), int(entry["row"])): entry for entry in queue_entries
     }
 
     if queue_entries:
@@ -1688,7 +1853,7 @@ def main(argv: list[str] | None = None) -> int:
             manifest["navigation_probe_expected_count"] = len(retest_items)
         else:
             manifest["retest_expected_count"] = len(retest_items)
-    if args.action_plan:
+    if args.action_plan and not stepwise_retest:
         _apply_agent_groups(manifest, execution_items, action_case_plans)
     existing_manifest_path = output / "execution_manifest.json"
     existing_run_id = ""
@@ -1743,7 +1908,7 @@ def main(argv: list[str] | None = None) -> int:
                         if args.action_plan
                         else None
                     )
-                    if action_case_plan is not None:
+                    if action_case_plan is not None and not stepwise_retest:
                         # The selected Agent owns the navigation grouping in
                         # structured-plan mode;
                         # the deterministic context grouping is only the
@@ -1770,8 +1935,14 @@ def main(argv: list[str] | None = None) -> int:
                     page_observation = "未获取到可用的页面观察"
                     observation = ""
                     elements: list[dict] = []
+                    llm_retest_result: dict[str, Any] | None = None
                     try:
-                        if args.action_plan:
+                        if stepwise_retest:
+                            # Retesting starts from a safe module state only;
+                            # the live retester decides how to reach the case's
+                            # target page from the fresh screenshot/UI tree.
+                            setup_ok = ensure_module_state(setup_events, sheet_name, session)
+                        elif args.action_plan:
                             if action_case_plan is None:
                                 raise AgentPlanError(
                                     f"执行用例缺少已校验的 Agent 计划: {sheet_name}!{row}"
@@ -1807,7 +1978,70 @@ def main(argv: list[str] | None = None) -> int:
                             action_ok = True
                             action_mode = "probe"
                         elif setup_ok:
-                            if args.action_plan:
+                            if stepwise_retest:
+                                retest_binding = agent_binding.get("retester") or {}
+                                first_pass = queue_context_by_key.get((sheet_name, row), {})
+                                profile_context = {
+                                    "path": str(APP_PROFILE) if APP_PROFILE else "",
+                                    "sha256": manifest.get("app_profile_sha256", ""),
+                                    "hints": case.get("profile_hints") or [],
+                                }
+
+                                def _observe_retest(phase: str, turn: int) -> Mapping[str, Any]:
+                                    return capture_retest_observation(
+                                        output,
+                                        sheet_name,
+                                        row,
+                                        phase,
+                                        turn,
+                                    )
+
+                                def _execute_retest(action: Mapping[str, Any]) -> Mapping[str, Any]:
+                                    operation_events: list[dict] = []
+                                    ok, detail, mode = execute_agent_actions(
+                                        operation_events,
+                                        [dict(action)],
+                                        phase="LLM复测动作",
+                                    )
+                                    return {
+                                        "ok": ok,
+                                        "detail": detail or ("底层动作已完成" if ok else "底层动作未完成"),
+                                        "action_mode": mode,
+                                        "events": operation_events,
+                                    }
+
+                                agent_session = create_agent_session(
+                                    retest_binding,
+                                    initial_context={
+                                        "case_id": case["case_id"],
+                                        "sheet": sheet_name,
+                                        "row": row,
+                                        "app": app_config.manifest_context(
+                                            adapter_name=_active_adapter().name
+                                        ),
+                                    },
+                                )
+                                try:
+                                    llm_retest_result = run_retest_case(
+                                        case,
+                                        session=agent_session,
+                                        observe=_observe_retest,
+                                        execute=_execute_retest,
+                                        profile=profile_context,
+                                        generic_knowledge=plan.get("generic_planning_knowledge") or {},
+                                        first_pass=first_pass,
+                                        limits=RetestLimits(),
+                                    )
+                                finally:
+                                    agent_session.close()
+                                action_events.extend(llm_retest_result.get("action_trace") or [])
+                                action_ok = llm_retest_result.get("status") != "⛔阻塞"
+                                action_mode = "llm_retest"
+                                if llm_retest_result.get("status") == "⛔阻塞":
+                                    error_detail = str(
+                                        llm_retest_result.get("reason") or "LLM 复测未形成安全终态"
+                                    )
+                            elif args.action_plan:
                                 action_ok, error_detail, action_mode = execute_agent_actions(
                                     action_events,
                                     action_case_plan.get("actions") or [],
@@ -1846,7 +2080,19 @@ def main(argv: list[str] | None = None) -> int:
                         str(case.get(key, "")) for key in ("case_name", "entry", "precondition", "action", "expected")
                     )
                     verification_only = any(k in verification_text for k in ("PC", "核对", "数据刷新", "实时", "开市", "时段"))
-                    if not setup_ok or not action_ok:
+                    if stepwise_retest and llm_retest_result is not None:
+                        if not setup_ok:
+                            status = "⛔阻塞"
+                            blocked_reason = error_detail or "模块初始状态建立失败"
+                        elif not shot_ok:
+                            status = "⛔阻塞"
+                            blocked_reason = "独立证据截图未生成或为空"
+                        else:
+                            status = str(llm_retest_result.get("status") or "⛔阻塞")
+                            blocked_reason = "" if status == "✅通过" else str(
+                                llm_retest_result.get("reason") or "LLM 复测未给出具体判断理由"
+                            )
+                    elif not setup_ok or not action_ok:
                         status = "⛔阻塞"
                         blocked_reason = error_detail or "入口、动作或独立证据采集失败"
                     elif not shot_ok:
@@ -1872,26 +2118,41 @@ def main(argv: list[str] | None = None) -> int:
                         status = "✅通过"
                         blocked_reason = ""
 
-                    judgment_reason = executor_judgment_reason(
-                        status,
-                        setup_ok=setup_ok,
-                        action_ok=action_ok,
-                        shot_ok=shot_ok,
-                        action_mode=action_mode,
-                        error_detail=error_detail,
-                        blocked_reason=blocked_reason,
-                        probe=args.probe,
-                        agent_plan=bool(args.action_plan),
-                    )
-                    observation = build_actual(
-                        action_events,
-                        elements,
-                        setup_ok=setup_ok,
-                        action_ok=action_ok,
-                        error_detail=error_detail,
-                        judgment_status=status,
-                        judgment_reason=judgment_reason,
-                    )
+                    if stepwise_retest and llm_retest_result is not None:
+                        judgment_reason = str(
+                            llm_retest_result.get("reason")
+                            or blocked_reason
+                            or "LLM 复测未给出具体判断理由"
+                        )
+                    else:
+                        judgment_reason = executor_judgment_reason(
+                            status,
+                            setup_ok=setup_ok,
+                            action_ok=action_ok,
+                            shot_ok=shot_ok,
+                            action_mode=action_mode,
+                            error_detail=error_detail,
+                            blocked_reason=blocked_reason,
+                            probe=args.probe,
+                            agent_plan=bool(args.action_plan),
+                        )
+                    if (
+                        stepwise_retest
+                        and llm_retest_result is not None
+                        and shot_ok
+                        and str(llm_retest_result.get("status")) == status
+                    ):
+                        observation = str(llm_retest_result.get("actual") or "")
+                    else:
+                        observation = build_actual(
+                            action_events,
+                            elements,
+                            setup_ok=setup_ok,
+                            action_ok=action_ok,
+                            error_detail=error_detail,
+                            judgment_status=status,
+                            judgment_reason=judgment_reason,
+                        )
 
                     record = {
                         "module": module["module"],
@@ -1915,7 +2176,9 @@ def main(argv: list[str] | None = None) -> int:
                         "page_group_key": page_group_key,
                         "status": status,
                         "planning_mode": (
-                            "agent_structured_action_plan"
+                            "llm_stepwise_retest"
+                            if stepwise_retest
+                            else "agent_structured_action_plan"
                             if args.action_plan
                             else "legacy_deterministic_explicit"
                         ),
@@ -1933,13 +2196,17 @@ def main(argv: list[str] | None = None) -> int:
                         "action_trace": action_events,
                         "tested_at": now(),
                     }
-                    if action_case_plan is not None:
+                    if action_case_plan is not None and not stepwise_retest:
                         record["action_plan_case"] = {
                             "target_page": action_case_plan.get("target_page"),
                             "navigation": action_case_plan.get("navigation") or [],
                             "actions": action_case_plan.get("actions") or [],
                             "expected_observations": action_case_plan.get("expected_observations") or [],
                         }
+                    if llm_retest_result is not None:
+                        record["steps"] = llm_retest_result.get("steps") or []
+                        record["llm_retest"] = llm_retest_result.get("llm_retest") or {}
+                        record["retest_agent"] = llm_retest_result.get("llm_retest", {}).get("session") or {}
                     if args.probe:
                         record["probe"] = {
                             "navigation_only": True,
@@ -1985,13 +2252,15 @@ def main(argv: list[str] | None = None) -> int:
             "type": "runtime_policy",
             "scope": "run",
             "policy": (
-                "agent_structured_actions_adapter_module_cold_start_page_group_reuse_row_execution"
+                "llm_stepwise_retest_fresh_session"
+                if stepwise_retest
+                else "agent_structured_actions_adapter_module_cold_start_page_group_reuse_row_execution"
                 if args.action_plan
                 else "legacy_deterministic_adapter_module_cold_start_page_group_reuse_row_execution"
             ),
             "adapter": _active_adapter().name,
-            "agent_plan_required": bool(args.action_plan),
-            "llm_plan_required": bool(args.action_plan),
+            "agent_plan_required": bool(args.action_plan and not stepwise_retest),
+            "llm_plan_required": bool(args.action_plan and not stepwise_retest),
             "stats": session_snapshot(session),
         }
     )
@@ -2020,6 +2289,7 @@ def main(argv: list[str] | None = None) -> int:
             device=DEVICE,
             action_plan=args.action_plan,
             legacy_deterministic=bool(args.legacy_deterministic),
+            llm_retest=bool(args.llm_retest),
         )
         if retest_exit_code != 0:
             rotate([], False)

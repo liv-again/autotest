@@ -6,7 +6,7 @@
 
 跨 App 的规划技巧机器可读权威源为 `tools/generic_planning_knowledge.yaml`；运行 `tools/agent_plan.py context` 时会自动注入 `generic_planning_knowledge`，当前选定的 Agent 在生成动作计划时必须读取并仅对适用用例采用。
 
-规划阶段的默认模型配置位于 `tools/agent_model_config.yaml`，当前桌面运行时默认使用精确模型 ID `gpt-5.6-luna`。如明确切换到其他 Agent/runtime，可通过 `SIXGILL_PLANNER_MODEL` 覆盖；action plan 的 `planner.model` 必须记录实际使用的模型 wire ID，不能填写界面显示名称或旧别名。
+规划阶段的默认模型配置位于 `tools/agent_model_config.yaml`，当前桌面运行时默认使用精确模型 ID `gpt-5.6-luna`。如明确切换到其他 Agent/runtime，可通过 `SIXGILL_PLANNER_MODEL` 覆盖；action plan 的 `planner.model` 必须记录实际使用的模型 wire ID，不能填写界面显示名称或旧别名。规划、复测和复核默认继承同一 Agent/model 绑定，但必须使用彼此独立的新会话；角色级覆盖只能显式使用 `SIXGILL_RETEST_*` 或 `SIXGILL_REVIEW_*`。
 
 ## 模块级规划，页面分组，行级执行，结果集中复核
 
@@ -15,7 +15,7 @@
 - 执行器按 `source_order`/Excel 实际行号升序逐条执行，每行是一个独立执行单元；不得因为多个用例落在同一页面而合并业务动作。
 - 每行必须独立完成：目标组上下文确认 → 目标页校验 → 本行动作 → 本行断言/观察 → 独立证据 → 立即落盘。
 - 同组行可以复用已验证的导航和页面，但每行仍必须重新校验目标页；页面被上一行改变时，先恢复组锚点。不同层级目录、入口、市场、方向或前置数据不得跨组复用。
-- 目标页校验失败时，执行器最多执行一次 action plan 中已声明的 `recovery_navigation`，并重新通过原目标页门禁；计划仍失败就阻塞本行，不由执行器临场猜测新的动作。
+- 首轮目标页校验失败时，确定性执行器最多执行一次 action plan 中已声明的 `recovery_navigation`，并重新通过原目标页门禁；计划仍失败就阻塞本行。对阻塞队列显式启用 `--llm-retest` 时，改由独立的 retester 会话重新读取原始 Excel、画像、实时截图/UI 树，逐步决定动作，旧 action plan 只作审计参考。
 - 模块完成后，LLM 只接收失败、阻塞、待验证和低置信度记录做集中分析；通过用例不重复发送完整 UI 树和截图。
 
 ## 状态与动作硬约束
@@ -34,13 +34,13 @@
 - 原始 UI 树只能作为 `page_observation` 等底层证据，不能单独填入“AI实测结果”；不得复制 Excel 操作描述，截图无法确认的内容必须明确标为无法确认。`AI实测结果` 必须按“AI执行步骤 → 操作结果 → 判断理由”三段输出，判断理由必须说明为何判定通过、不通过、待验证或阻塞。
 - 每完成一行就追加到 `execution_records.jsonl` 并更新 `execution_state.json`；禁止等整批结束后才一次性写结果。
 - 暂停或异常时，保留最后一条已持久化行，恢复时只补跑未完成行；不能读取旧轮次结果补齐当前轮次。
-- Sheet/模块首轮结束后，执行器默认把首轮阻塞用例放入同目录的延迟复测队列，逐条重新 setup 并复测一次；复测仍阻塞就保留最终状态，不自动无限复测。LLM 复核后产生的失败、部分通过或待验证项仍可按需使用通用复测队列显式复测。
+- Sheet/模块首轮结束后，执行器默认把首轮阻塞用例放入同目录的延迟复测队列，逐条重新 setup 并复测一次；复测仍阻塞就保留最终状态，不自动无限复测。需要让 LLM 重新理解并操作时，给复测子运行传入 `--llm-retest` 和桌面 Agent session factory；完整运行的自动子进程必须通过 `SIXGILL_AGENT_SESSION_FACTORY=module:function` 提供，显式复测队列也可由嵌入式宿主注册 factory；否则仅使用兼容模式重放已校验计划。LLM 复核后产生的失败、部分通过或待验证项仍可按需使用通用复测队列显式复测。
 - 只有完整性门和结果质量门通过后才生成正式最终报告。只有截图、manifest 和暂停状态时，只能生成证据型中间报告。
 - 结果质量门允许同一页面的观察事实在不同用例中重复，但前提是每条记录具备自己的 action/expected 上下文和独立 evidence；没有上下文的重复 actual 仍必须拦截。
 - 每轮完成后生成 `profile_feedback.json`；它只包含带证据、版本和执行行号的画像候选，未经 `reback_run`、schema 和 lint 校验不得直接覆盖正式画像。
 
 ## 当前临时脚本的使用限制
 
-`tools/_run_three_sheets.py` 仅用于本次问题复盘和兼容旧任务。正式执行必须先由当前选定的 Agent 读取 `tools/agent_plan.py context` 产出的上下文，生成并校验 `agent_action_plan.json`，再以 `--action-plan` 启动；执行器只调用计划中的低层动作。`--legacy-deterministic` 仅用于迁移诊断。不得重新引入“只解析用例名称+操作描述、未识别动作 observe 通过、末尾一次性写结果”等旧行为。
+`tools/_run_three_sheets.py` 仅用于本次问题复盘和兼容旧任务。首轮正式执行必须先由当前选定的 Agent 读取 `tools/agent_plan.py context` 产出的上下文，生成并校验 `agent_action_plan.json`，再以 `--action-plan` 启动；执行器只调用计划中的低层动作。阻塞复测若使用 `--llm-retest`，则由 `tools/agent_session.py` 创建独立的 provider-neutral 桌面会话，原始用例和实时证据由 retester 逐步消费，不能回退到 CLI/Codex 专用传输。`--legacy-deterministic` 仅用于迁移诊断。不得重新引入“只解析用例名称+操作描述、未识别动作 observe 通过、末尾一次性写结果”等旧行为。
 
 执行器通过 `--app` 选择 `apps/<slug>/app.yaml`；没有 `adapter.py` 的 App 必须走 `tools.app_adapter.GenericAdapter`，不得在通用执行器中新增券商专用包名、坐标或页面判断。

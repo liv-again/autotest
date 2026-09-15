@@ -15,7 +15,7 @@ AI 驱动 Android App 用 Excel 用例做业务自测的作业指导。用户给
 3. 测前：读前置任务产出的「本轮前置」清单（代码已解析/补齐），仍缺码 = 前置未完成，回前置任务；
 4. 测前：用前置任务的 `scope_hash` 冻结 selection，可审计、不临场扩大；
 5. 测前：读 `apps/<app>/env.yaml` 走 `tools/safety/env_auth.verify_env` 定 mode（默认安全降级 confirm_only）；
-6. 测中：按 `references/workflow.md` 执行模块/页面组规划、组内导航复用、行级动作和独立截图；下单类经 `tools/safety/submit_guard.py` 硬校验；目标页失败允许一次运行时重规划，恢复失败才阻塞；
+6. 测中：按 `references/workflow.md` 执行模块/页面组规划、组内导航复用、行级动作和独立截图；下单类经 `tools/safety/submit_guard.py` 硬校验；首轮目标页失败最多消费一次计划内恢复导航，恢复失败才阻塞；阻塞复测可用 `--llm-retest` 让独立 retester 会话重新读取用例和实时证据；
 7. 测后：先生成 `llm_review_queue.json`，由 LLM 逐行复核目标页面、动作效果和预期结果，再用 `tools/llm_review_results.py` 合并并用 `tools/build_results.py` 过质量门；之后按 `sheet+row` 回填 Excel；画像先生成 `profile_feedback.json`，审核后再用 `tools/reback.py` 反哺画像 → `tools/derive_docs.py` 重派生 md → `tools/lint_profile.py` 查漂移 → `tools/metrics.py` 记 metrics。
 
 ## 完整细节

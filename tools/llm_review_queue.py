@@ -1,10 +1,10 @@
 """Build the row-level evidence queue consumed by the LLM reviewer.
 
 The low-level mobile driver remains deterministic, but its normal input is a
-structured action plan authored by the selected Agent.  This module makes the semantic LLM
-review explicit instead of pretending that a button tap or a screenshot file
-is a pass result.  The reviewer receives one compact item per Excel row and
-returns verdicts that can be merged by ``llm_review_results.py``.
+structured action plan authored by the selected Agent.  This module makes the
+semantic LLM review explicit instead of pretending that a button tap or a
+screenshot file is a pass result.  The reviewer receives one compact item per
+Excel row and returns verdicts that can be merged by ``llm_review_results.py``.
 """
 
 from __future__ import annotations
@@ -71,6 +71,7 @@ def build_review_queue(
             "actual": record.get("actual") or record.get("observation"),
             "page_observation": record.get("page_observation"),
             "action_trace": record.get("action_trace") or [],
+            "llm_retest": record.get("llm_retest") or {},
             "evidence": [
                 str(path).replace("\\", "/")
                 for path in (record.get("evidence") or record.get("evidence_paths") or [])
@@ -103,16 +104,24 @@ def build_review_queue(
         "execution_manifest": execution_manifest,
         "agent_binding": run_agent_binding,
         "review_agent_default": reviewer_default,
+        "retest_agent_default": (
+            run_agent_binding.get("retester")
+            if isinstance(run_agent_binding, Mapping)
+            else None
+        ),
         "source_execution_path": (
             str(Path(source_path).expanduser().resolve()).replace("\\", "/")
             if source_path is not None
             else None
         ),
         "llm_instruction": (
-            "逐条读取 expected、navigation_context、action_plan_case、action_trace、page_observation 和 evidence 截图。"
+            "逐条读取 expected、navigation_context、action_trace、page_observation 和 evidence 截图；"
+            "若存在 action_plan_case，只把它当作首轮历史参考。"
             "先判断截图是否为目标页面，再判断动作效果和预期结果。不要根据 executor_status 直接通过，"
             "也不能用 LLM 结果覆盖确定性页面/动作阻塞。每项必须返回 JSON；reason 必须是非空的具体判断理由，"
             "并会被回填到 AI实测结果的‘判断理由’段落。默认使用 review_agent_default 中的 Agent 和 model；"
+            "复测阶段如存在 llm_retest 记录，只把它当作执行事实；复核必须创建独立的只读会话，"
+            "不能沿用复测会话的上下文或继续操作设备。"
             "若有明确的角色级覆盖，必须在输出 agent 元数据中记录实际使用者。"
         ),
         "verdict_schema": {

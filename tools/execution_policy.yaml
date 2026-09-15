@@ -33,6 +33,18 @@ page_grouping:
   require_row_level_evidence: true
   max_runtime_replans: 1
 
+# Retesting is a separate execution phase.  The opt-in LLM mode is deliberately
+# bounded and creates one fresh session per selected row; it never reuses an
+# earlier planner conversation or treats the old action plan as live authority.
+retest:
+  blocked_auto_enabled: true
+  max_rounds: 1
+  default_mode: validated_plan_replay
+  llm_mode_flag: --llm-retest
+  llm_session_policy: new_per_case
+  old_action_plan_authority: reference_only
+  reviewer_session_policy: new_readonly
+
 llm_execution:
   planning_scope: module_page_group
   execution_context: page_group

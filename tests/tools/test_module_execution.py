@@ -236,6 +236,33 @@ def test_retest_queue_resolves_only_requested_rows(tmp_path):
     assert items[0][1]["page_group_id"] == "模块A-page-group-001"
 
 
+def test_retest_queue_carries_first_pass_agent_binding(tmp_path):
+    queue_path = tmp_path / "bound_retest_queue.json"
+    queue_path.write_text(
+        json.dumps(
+            {
+                "agent_binding": {
+                    "planner": {"agent": "Trae", "model": "model-a"},
+                    "retester": {"agent": "Trae", "model": "model-a"},
+                },
+                "cases": [
+                    {
+                        "sheet": "模块A",
+                        "row": 3,
+                        "case_id": "模块A-row-003",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    entries = runner._load_retest_queue(queue_path)
+
+    assert entries[0]["agent_binding"]["planner"]["agent"] == "Trae"
+
+
 def test_retest_queue_rejects_duplicate_rows(tmp_path):
     queue_path = tmp_path / "duplicate_queue.json"
     queue_path.write_text(
@@ -275,6 +302,25 @@ def test_blocked_retest_command_disables_recursive_retest(tmp_path):
     assert "--retest-queue" in command
     assert "--no-auto-retest-blocked" in command
     assert "--resume" not in command
+
+
+def test_blocked_retest_command_can_select_stepwise_llm_mode(tmp_path):
+    command = runner._blocked_retest_command(
+        app_slug="zhongyuan",
+        source=tmp_path / "cases.xlsx",
+        profile=tmp_path / "profile.yaml",
+        device="device-1",
+        output=tmp_path / "blocked-retest",
+        queue_path=tmp_path / "blocked_retest_queue.json",
+        action_plan=str(tmp_path / "agent_action_plan.json"),
+        legacy_deterministic=False,
+        llm_retest=True,
+        resume=False,
+    )
+
+    assert "--llm-retest" in command
+    assert "--no-auto-retest-blocked" in command
+    assert "--action-plan" not in command
 
 
 def test_blocked_retest_runs_once_and_merges(tmp_path, monkeypatch):

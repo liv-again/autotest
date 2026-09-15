@@ -38,10 +38,17 @@ Agent 计划产生的成功动作不会直接变成通过。执行器先记录�
 
 `llm_review_queue.json` 是一次运行的唯一复核入口。复核 Agent 不能直接改写执行记录或截图；它只读取队列中的事实和证据，并输出 `llm_reviews.json`。
 
-队列中的 `review_agent_default` 来自本次 `agent_action_plan.json` 的
-`planner.agent`/`planner.model`。复核 Agent 默认应使用该 Agent 和模型；如果明确
-使用了不同的 Agent 或模型，必须在 `llm_reviews.json.agent` 中记录实际值。规划、
-规划和复核的 prompt_version 可以不同，因为两者承担的任务不同。
+队列中的 `review_agent_default` 来自本次执行清单的
+`execution_manifest.agent_binding.reviewer`。在没有角色级覆盖时，
+`reviewer.agent`/`reviewer.model` 与 `agent_action_plan.json` 的
+`planner.agent`/`planner.model` 相同。复核 Agent 默认应使用相同的 Agent 和模型，
+但必须创建独立的只读会话；如果明确使用了不同的 Agent 或模型，必须在
+`llm_reviews.json.agent` 中记录实际值。规划、复测和复核的 prompt_version 可以不同，
+因为三者承担的任务不同。
+
+复测记录中的 `llm_retest.session` 只描述逐步复测事实。复核 Agent 不得沿用该
+session_id、继续控制设备或把复测的 `pass` 直接当作最终结论；它必须重新读取当前
+队列中的截图、UI 树、动作轨迹和 Excel `expected`，独立给出判断理由。
 
 ## 运行链路
 

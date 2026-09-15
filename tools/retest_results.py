@@ -5,6 +5,11 @@ non-passing cases, creates a one-case-at-a-time queue, and merges the executor
 owned second-pass observations back into a new result document.  It does not
 operate the device and it never invents an ``actual`` value.
 
+The queue carries the first-pass ``agent_binding`` when available.  A caller
+may pass it to ``_run_three_sheets.py --llm-retest`` without passing the old
+action plan; the retest host then creates one fresh session per case and lets
+the Agent re-understand the original row from live evidence.
+
 Typical workflow::
 
     python tools/retest_results.py plan \
@@ -196,13 +201,29 @@ def plan_retests(
             }
         )
 
-    return {
+    result = {
         "schema_version": "2.0",
         "execution_mode": "single_case",
         "scope": {"type": scope, "name": scope_name},
         "status_buckets": list(status_buckets),
         "cases": queue,
     }
+    # Carry the first-pass role binding with the queue so a direct
+    # ``--llm-retest --retest-queue`` run can inherit the same Agent/model
+    # without requiring the old action plan as an execution authority.
+    execution_manifest = (
+        document.get("execution_manifest")
+        if isinstance(document, Mapping)
+        else None
+    )
+    agent_binding = (
+        execution_manifest.get("agent_binding")
+        if isinstance(execution_manifest, Mapping)
+        else None
+    )
+    if isinstance(agent_binding, Mapping):
+        result["agent_binding"] = copy.deepcopy(dict(agent_binding))
+    return result
 
 
 def _index_records(records: Sequence[Mapping[str, Any]], label: str) -> dict[str, dict[str, Any]]:

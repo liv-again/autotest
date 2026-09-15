@@ -7,3 +7,15 @@ schema_version: "1.0"
 planner:
   model: "gpt-5.6-luna"
   model_env: "SIXGILL_PLANNER_MODEL"
+
+# Retesting and result review inherit planner.agent/model at runtime, but each
+# role starts a fresh session.  Provider integration is deliberately external
+# to this file so the workflow is not tied to Codex, OpenCode, Trae, or Claude.
+# Optional role-specific overrides are SIXGILL_RETEST_AGENT_NAME /
+# SIXGILL_RETEST_MODEL and SIXGILL_REVIEW_AGENT_NAME / SIXGILL_REVIEW_MODEL.
+retester:
+  prompt_version: "row-retest-v1"
+  session_policy: "new_per_case"
+reviewer:
+  prompt_version: "row-review-v1"
+  session_policy: "new_readonly"

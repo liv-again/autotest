@@ -32,6 +32,13 @@ def _case(row, case_id, status, actual, *, module="行情", evidence=None):
 
 def test_plan_selects_non_passing_cases_one_by_one_and_excludes_skip():
     document = {
+        "execution_manifest": {
+            "agent_binding": {
+                "planner": {"agent": "Trae", "model": "model-a"},
+                "retester": {"agent": "Trae", "model": "model-a"},
+                "reviewer": {"agent": "Trae", "model": "model-a"},
+            }
+        },
         "cases": [
             _case(2, "TC-FAIL", "❌失败", "页面显示错误提示"),
             _case(3, "TC-PARTIAL", "⚠️部分通过", "列表仅显示部分数据"),
@@ -46,6 +53,7 @@ def test_plan_selects_non_passing_cases_one_by_one_and_excludes_skip():
     assert [item["retest_id"] for item in plan["cases"]] == ["行情!2", "行情!3"]
     assert all(item["fresh_setup_required"] for item in plan["cases"])
     assert "判断理由：判定为❌失败。" in plan["cases"][0]["case"]["actual"]
+    assert plan["agent_binding"]["planner"]["agent"] == "Trae"
 
 
 def test_merge_retest_replaces_visible_result_but_keeps_both_attempts():

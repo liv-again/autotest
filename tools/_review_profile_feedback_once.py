@@ -134,9 +134,9 @@ def _review_recovery_candidate(
 def review(root: Path) -> dict[str, Any]:
     summary = json.loads((root / "summary.json").read_text(encoding="utf-8"))
     review_date = date.today().isoformat()
-    agent_name = os.environ.get("SIXGILL_AGENT_NAME", "configured-agent")
-    agent_model = os.environ.get("SIXGILL_AGENT_MODEL", "configured-model")
-    prompt_version = os.environ.get("SIXGILL_AGENT_PROMPT_VERSION", "profile-candidate-review-v1")
+    agent_name = os.environ.get("SIXGILL_REVIEW_AGENT_NAME", "configured-agent")
+    agent_model = os.environ.get("SIXGILL_REVIEW_MODEL", "configured-model")
+    prompt_version = os.environ.get("SIXGILL_REVIEW_PROMPT_VERSION", "profile-candidate-review-v1")
     aggregate = {
         "approve_as_update": 0,
         "hold": 0,

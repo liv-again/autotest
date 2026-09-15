@@ -135,11 +135,11 @@ def append_judgment_reason(actual: Any, status: Any, reason: Any) -> str:
     if not reason_text:
         raise ValueError("判断理由不能为空")
 
-    cut_positions = [
-        position
-        for label in (ACTUAL_REASON_LABEL, "判断结论：")
-        if (position := actual_text.find(label)) >= 0
-    ]
+    cut_positions = []
+    for label in (ACTUAL_REASON_LABEL, "判断结论："):
+        position = actual_text.find(label)
+        if position >= 0:
+            cut_positions.append(position)
     if cut_positions:
         actual_text = actual_text[: min(cut_positions)].rstrip()
 

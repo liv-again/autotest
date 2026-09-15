@@ -37,10 +37,13 @@ def wait_device(tries=3, interval=30):
         _, out, _ = adb("devices")
         online = []
         for ln in out.splitlines():
-            if "List of devices" in ln or "\t" not in ln:
+            if "List of devices" in ln:
                 continue
-            serial, state = ln.split("\t", 1)
-            if state.strip() == "device":
+            fields = ln.split()
+            if len(fields) < 2:
+                continue
+            serial, state = fields[0], fields[1]
+            if state == "device":
                 online.append(serial.strip())
         if online:
             print(f"设备已连接: {online[0]}（第{i+1}/{tries}次探测）")

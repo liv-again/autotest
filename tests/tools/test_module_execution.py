@@ -89,6 +89,36 @@ def test_build_actual_uses_trace_steps_and_screenshot_visible_text():
     assert "行情界面，点击“港股”tab页" not in actual
 
 
+def test_build_actual_separates_observe_from_execution_steps():
+    actual = runner.build_actual(
+        [{"type": "observe", "target": "当前页面", "result": "success"}],
+        [{"text": "列表"}],
+        setup_ok=True,
+        action_ok=True,
+        judgment_status="🟡待验证",
+        judgment_reason="仅采集观察证据，未形成最终结论",
+    )
+
+    assert "observe" not in actual
+    assert "仅采集页面状态" in actual
+    assert "列表" in actual
+
+
+def test_observe_only_judgment_reason_is_not_an_execution_result():
+    reason = runner.executor_judgment_reason(
+        "🟡待验证",
+        setup_ok=True,
+        action_ok=True,
+        shot_ok=True,
+        action_mode="legacy",
+        observation_was_requested=True,
+        execution_was_performed=False,
+    )
+
+    assert "未执行真实业务动作" in reason
+    assert "不能形成最终结果" in reason
+
+
 def test_row_target_contract_rejects_detail_and_accepts_a_share_list(monkeypatch):
     case = {
         "case_name": "TC_表头字段排序",
@@ -484,7 +514,7 @@ def test_exception_queue_is_compact_and_excludes_pass_cases():
     assert queue["cases"][0]["exception_id"] == "A-2"
 
 
-def test_row_scoped_gate_rejects_observe_only_pass_and_missing_order():
+def test_row_scoped_gate_separates_observe_from_execution_mode_and_order():
     manifest = {
         "mode": "full",
         "execution_scope": "single_excel_row",
@@ -496,7 +526,9 @@ def test_row_scoped_gate_rejects_observe_only_pass_and_missing_order():
         "row": 2,
         "case_id": "模块A-row-002",
         "status": "✅通过",
-        "action_mode": "observe",
+        "execution_mode": "agent",
+        "action_mode": "agent",
+        "observation_requested": True,
         "actual": "页面显示列表",
         "evidence": ["shots/a.png"],
         "action_trace": [{"type": "observe", "result": "success"}],
@@ -506,7 +538,63 @@ def test_row_scoped_gate_rejects_observe_only_pass_and_missing_order():
 
     assert any("缺少 source_order" in error for error in errors)
     assert any("缺少 execution_order" in error for error in errors)
-    assert any("observe-only" in error for error in errors)
+    assert any("真实 execution_trace/action_trace" in error for error in errors)
+    assert not any("observe-only" in error for error in errors)
+    assert not any("execution_mode" in error for error in errors)
+
+
+def test_agent_setup_does_not_skip_declared_navigation_on_current_match(monkeypatch):
+    calls = []
+
+    def fake_module_state(events, sheet_name, session):
+        calls.append(("module_state", sheet_name))
+        return True
+
+    def fake_wait(events, target_page, *, phase):
+        calls.append(("gate", phase))
+        return True
+
+    def fake_execute(events, actions, *, phase):
+        calls.append(("execute", phase, actions))
+        return True, "", "agent"
+
+    monkeypatch.setattr(runner, "ensure_module_state", fake_module_state)
+    monkeypatch.setattr(runner, "wait_for_agent_target", fake_wait)
+    monkeypatch.setattr(runner, "execute_agent_actions", fake_execute)
+
+    session = runner.ModuleSession()
+    plan = {
+        "page_group_id": "g1",
+        "page_group_key": "行情|股指",
+        "navigation_source": "llm_inferred",
+        "navigation_status": "unverified",
+        "navigation_policy": "required",
+        "navigation": [{"type": "tap_text", "text": "行情"}],
+        "recovery_navigation": [{"type": "tap_text", "text": "行情"}],
+        "target_page": {"description": "股指页", "all_ids": ["guzhi_page"]},
+    }
+
+    assert runner.setup_agent_case([], "行情", 2, {}, session, plan)
+    assert calls == [
+        ("module_state", "行情"),
+        ("execute", "公共导航", [{"type": "tap_text", "text": "行情"}]),
+        ("gate", "公共导航后"),
+    ]
+
+
+def test_agent_setup_fails_closed_for_weak_gate_without_navigation(monkeypatch):
+    monkeypatch.setattr(runner, "ensure_module_state", lambda events, sheet, session: True)
+    monkeypatch.setattr(runner, "wait_for_agent_target", lambda events, target, *, phase: True)
+
+    events = []
+    plan = {
+        "page_group_id": "g1",
+        "page_group_key": "行情|股指",
+        "navigation": [],
+        "target_page": {"description": "弱门禁", "any_text": ["股指", "行情"]},
+    }
+
+    assert not runner.setup_agent_case([], "行情", 2, {}, runner.ModuleSession(), plan)
 
 
 def test_module_session_cold_starts_once_then_soft_resets(monkeypatch):

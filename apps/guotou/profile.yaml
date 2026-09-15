@@ -50,7 +50,7 @@ entries:
   evidence_run: outputs/2026-08-27-guotou-full
   status: verified
 - key: quote.kline
-  path: 行情列表→任一股票→个股分时页左滑可切换至K线页面；也可点击分时图全屏入口；横屏周期：分时/5日/日K/周K/月K/分钟；右上角X返回；竖屏底栏：周期/指标/更多
+  path: 行情列表→任一股票→个股分时页左滑可切换至K线页面；也可点击分时图全屏入口；横屏周期：分时/5日/日K/周K/月K/分钟；右上角X返回；竖屏底栏：周期/指标/更多；K线设置按钮为齿轮图标，可打开K线设置面板
   last_verified: '2026-09-15'
   app_version: V10.5.4
   evidence_run: output/2026-09-15-guotou-generic-navigation-full

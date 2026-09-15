@@ -47,3 +47,22 @@ def test_dump_xml_reports_pull_failure(monkeypatch, tmp_path):
         assert "device disconnected" in str(exc)
     else:
         raise AssertionError("dump_xml should report adb pull failure")
+
+
+def test_text_and_id_taps_ignore_hidden_or_disabled_nodes(monkeypatch):
+    xml = """
+    <hierarchy>
+      <node text="入口" bounds="[0,0][10,10]" clickable="true" visible-to-user="false" />
+      <node text="入口" resource-id="pkg:id/entry" bounds="[20,20][40,40]"
+            clickable="true" enabled="true" visible-to-user="true" />
+      <node resource-id="pkg:id/disabled" bounds="[50,50][70,70]"
+            clickable="true" enabled="false" visible-to-user="true" />
+    </hierarchy>
+    """
+    calls = []
+    monkeypatch.setattr(droid, "dump_xml", lambda *args, **kwargs: xml)
+    monkeypatch.setattr(droid, "adb", lambda *args, **kwargs: calls.append(args) or (0, "", ""))
+
+    assert droid.tap_text("入口") == 0
+    assert droid.tap_id("disabled") == 1
+    assert calls == [("shell", "input", "tap", "30", "30")]

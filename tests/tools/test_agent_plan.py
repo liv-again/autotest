@@ -136,6 +136,49 @@ def test_structured_executor_has_no_empty_action_fallback():
     assert events[-1]["type"] == "executor"
 
 
+def test_observe_is_evidence_only_and_does_not_change_execution_mode():
+    events = []
+
+    ok, detail, mode = runner.execute_agent_actions(
+        events,
+        [{"type": "observe", "target": "列表页"}],
+        phase="本行操作",
+    )
+
+    assert ok
+    assert detail == ""
+    assert mode == "agent"
+    assert runner.observation_requested(events) is True
+    assert events[0]["type"] == "observe"
+
+
+def test_selected_target_gate_does_not_match_unselected_duplicate_label():
+    ok, detail = runner.agent_target_match(
+        {"description": "股指页", "selected_text": ["股指"]},
+        [
+            {"text": "股指", "selected": False, "visible": True},
+            {"text": "沪深京", "selected": True, "visible": True},
+        ],
+    )
+
+    assert not ok
+    assert "选中文字:股指" in detail
+
+
+def test_exact_target_gate_requires_stable_identity_not_one_common_label(tmp_path):
+    source = _source(tmp_path)
+    plan = _plan(source)
+    plan["cases"][0]["target_page"]["gate_mode"] = "exact"
+
+    plan_path = tmp_path / "weak-exact.json"
+    plan_path.write_text(json.dumps(plan, ensure_ascii=False), encoding="utf-8")
+    context = build_agent_context(source)
+    cases = [case for module in context["modules"] for case in module["cases"]]
+
+    with pytest.raises(AgentPlanError, match="单个普通文字只能作为 weak 门禁"):
+        load_action_plan(plan_path, cases=cases, source_path=source)
+
+
 def test_runner_refuses_to_start_without_action_plan(tmp_path):
     with pytest.raises(ValueError, match="--action-plan"):
         runner.main(["--source", str(tmp_path / "missing.xlsx"), "--output", str(tmp_path / "run")])

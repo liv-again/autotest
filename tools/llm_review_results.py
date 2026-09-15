@@ -73,6 +73,31 @@ def _verdict_status(review: Mapping[str, Any]) -> str:
     return "🟡待验证"
 
 
+def _has_executable_trace(record: Mapping[str, Any]) -> bool:
+    """Do not treat an observe event as proof that a business action ran."""
+
+    raw = record.get("execution_trace")
+    if raw is None:
+        raw = record.get("action_trace")
+    items = raw if isinstance(raw, list) else [raw] if isinstance(raw, Mapping) else []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        kind = _text(item.get("type") or item.get("kind")).casefold()
+        result = _text(item.get("result") or item.get("outcome") or item.get("status")).casefold()
+        if kind not in {
+            "observe",
+            "evidence",
+            "probe",
+            "llm_observation",
+            "llm_request",
+            "llm_protocol",
+            "llm_decision",
+        } and result not in {"", "planned", "pending", "skipped"}:
+            return True
+    return False
+
+
 def merge_reviews(
     document: Mapping[str, Any],
     review_document: Mapping[str, Any] | list[Any],
@@ -127,9 +152,9 @@ def merge_reviews(
         if executor_bucket == "blocked":
             final_status = record.get("status") or "⛔阻塞"
             reason = _text(record.get("blocked_reason")) or "确定性执行门禁失败，LLM不能覆盖"
-        elif not record.get("action_trace") or not record.get("evidence"):
+        elif not _has_executable_trace(record) or not record.get("evidence"):
             final_status = "⛔阻塞"
-            reason = "缺少真实 action_trace 或独立 evidence，不能判定通过"
+            reason = "缺少真实 execution_trace/action_trace 或独立 evidence，不能判定通过"
         else:
             final_status = proposed
             reason = _text(review.get("reason"))

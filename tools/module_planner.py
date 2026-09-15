@@ -364,8 +364,28 @@ def _attach_profile_hints(groups: list[dict[str, Any]], profile: dict[str, Any])
             if any(token in path or token in key for token in tokens):
                 hints.append(entry)
         group["profile_hints"] = hints[:8]
+        # Keep route resolution explicit in the context.  ``profile_hints``
+        # remains evidence for the Agent; this companion object tells it how
+        # to choose between a profile route and a per-case inferred route.
+        group["navigation_resolution"] = {
+            "policy": "profile_first",
+            "profile_available": profile.get("status") == "loaded" and bool(entries),
+            "profile_route_candidates": [
+                {
+                    "key": _text(entry.get("key")),
+                    "path": _text(entry.get("path")),
+                    "status": _text(entry.get("status")) or "unknown",
+                    "app_version": _text(entry.get("app_version")),
+                }
+                for entry in group["profile_hints"]
+                if _text(entry.get("path"))
+            ],
+            "llm_fallback": "infer_from_case_and_preceding_hierarchy",
+            "feedback": "candidate_only_until_evidence_review",
+        }
         for case in group.get("cases", []):
             case["profile_hints"] = list(group["profile_hints"])
+            case["navigation_resolution"] = dict(group["navigation_resolution"])
 
 
 def build_module_plan(
@@ -405,16 +425,36 @@ def build_module_plan(
         "generic_planning_knowledge": _generic_planning_knowledge(),
         "page_batching_allowed": True,
         "grouping_strategy": "contiguous_navigation_context",
+        "navigation_resolution_policy": {
+            "order": ["profile", "profile_plus_llm", "llm_inferred"],
+            "profile_route_is_authoritative_when_explicit": True,
+            "fallback_inputs": [
+                "level_1",
+                "level_2",
+                "level_3",
+                "level_4",
+                "entry",
+                "precondition",
+                "step_name",
+                "case_name",
+                "action",
+                "expected",
+            ],
+            "feedback_mode": "evidence_backed_candidate",
+        },
         "agent_instruction": (
             "当前 Agent 读取本上下文和 App 画像后，为每条用例生成结构化 navigation/actions；"
+            "画像存在明确路径时优先按画像路径执行并标记来源，画像没有路径时根据本行及 TC 前的"
+            "一级至四级目录、入口、前置条件和步骤推理未验证路径；路径执行并经目标页后置门禁证明"
+            "有效后，输出带证据的画像候选反馈；"
             "页面组只复用导航，业务动作、截图、断言和结果仍按 Excel 行独立执行；"
             "规划涉及横屏列表、滑动、目标元素查找或排序时，必须参考"
             "generic_planning_knowledge 中适用的观察和验证规则。"
         ),
         "agent_roles": {
-            "planner": "按一级至四级目录、入口和前置条件识别导航上下文，不能仅按目标页面名称合并用例。",
+            "planner": "按一级至四级目录、入口和前置条件识别导航上下文，先使用画像明确路径；无画像路径时必须输出带来源和未验证状态的完整推理路径，不能仅按目标页面名称合并用例。",
             "executor": "首轮按已校验动作计划执行并逐行取证；阻塞复测由独立 retester 会话重新读取原始用例和实时证据，不能把旧计划当作新动作权威。",
-            "reviewer": "依据每行 action_trace、页面观察、预期结果和截图判断，不得用点击成功替代结果验证。",
+            "reviewer": "依据每行 execution_trace、observation_trace、页面观察、预期结果和截图判断；observe 只是观察证据，不得用其存在或点击成功替代结果验证。",
             "profile_feedback": "只输出带证据的画像候选，未经 schema、版本和重复校验不得覆盖正式画像。",
         },
         "source_file": str(Path(source).expanduser().resolve()),
@@ -426,6 +466,12 @@ def build_module_plan(
             "entry_count": len(profile.get("entries") or []),
             "capability_count": len(profile.get("capabilities") or []),
         },
+        # Do not make a route depend on the heuristic token match used for
+        # per-group hints.  The Agent needs the complete explicit profile
+        # paths so it can select the authoritative entry when a group has no
+        # overlapping Chinese token.
+        "app_profile_entries": profile.get("entries") or [],
+        "app_profile_capabilities": profile.get("capabilities") or [],
         "selected_sheets": [module["sheet"] for module in modules],
         "expected_count": len(cases),
         "execution_manifest": {

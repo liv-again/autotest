@@ -120,6 +120,35 @@ def _has_trace(record: Mapping[str, Any]) -> bool:
     return any(_valid_trace_item(item) for item in _trace_items(record))
 
 
+def _has_execution_trace(record: Mapping[str, Any]) -> bool:
+    """Require a real operation, not an observe/evidence bookkeeping event."""
+
+    raw = record.get("execution_trace") if "execution_trace" in record else None
+    if raw is None:
+        items = _trace_items(record)
+    elif isinstance(raw, list):
+        items = raw
+    elif isinstance(raw, Mapping):
+        items = [raw]
+    else:
+        items = []
+    for item in items:
+        if not _valid_trace_item(item):
+            continue
+        if isinstance(item, Mapping) and _text(item.get("type") or item.get("kind")).casefold() in {
+            "observe",
+            "evidence",
+            "probe",
+            "llm_observation",
+            "llm_request",
+            "llm_protocol",
+            "llm_decision",
+        }:
+            continue
+        return True
+    return False
+
+
 def _evidence_values(record: Mapping[str, Any]) -> set[str]:
     values: set[str] = set()
     for key in ("evidence_paths", "evidence"):
@@ -259,8 +288,15 @@ def validate_execution_contract(
 
         bucket = status_bucket(record.get("status"))
         trace = _has_trace(record)
+        executable_trace = _has_execution_trace(record)
         observation = _observation(record)
         evidence = _evidence_values(record)
+        if "observation_requested" in record and not isinstance(
+            record.get("observation_requested"), bool
+        ):
+            errors.append(f"{identity}: observation_requested 必须是布尔值")
+        if _text(record.get("execution_mode") or record.get("action_mode")) == "observe":
+            errors.append(f"{identity}: observe 只能作为观察证据，不能作为 execution_mode")
         if agent_plan_required and _text(record.get("planning_mode")) != "agent_structured_action_plan":
             errors.append(f"{identity}: Agent 动作计划运行的结果缺少 planning_mode=agent_structured_action_plan")
         if agent_plan_required and not isinstance(record.get("action_plan_case"), Mapping):
@@ -276,11 +312,9 @@ def validate_execution_contract(
                 errors.append(f"{identity}: 行级执行结果缺少 source_order")
             if settings.get("require_execution_order", True) and record.get("execution_order") in (None, ""):
                 errors.append(f"{identity}: 行级执行结果缺少 execution_order")
-            if settings.get("allow_observe_only_as_pass", False) is False and bucket == "pass" and record.get("action_mode") == "observe":
-                errors.append(f"{identity}: observe-only 结果不能判定为通过")
         if bucket in {"pass", "fail", "partial"}:
-            if settings.get("require_action_trace", True) and not trace:
-                errors.append(f"{identity}: 缺少真实 action_trace，不能判定为已执行")
+            if settings.get("require_action_trace", True) and not executable_trace:
+                errors.append(f"{identity}: 缺少真实 execution_trace/action_trace，不能判定为已执行")
             if settings.get("require_observation", True) and not observation:
                 errors.append(f"{identity}: 缺少执行后的 observation/actual")
             if settings.get("require_evidence", True) and not evidence:

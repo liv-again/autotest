@@ -52,6 +52,9 @@ def build_review_queue(
     cases: list[dict[str, Any]] = []
     records = _records(document)
     for record in _records(document):
+        action_plan_case = record.get("action_plan_case")
+        if not isinstance(action_plan_case, Mapping):
+            action_plan_case = {}
         review_case = {
             "case_id": record.get("case_id"),
             "sheet": record.get("sheet"),
@@ -66,10 +69,17 @@ def build_review_queue(
             "action": record.get("action"),
             "expected": record.get("expected"),
             "planning_mode": record.get("planning_mode"),
-            "action_plan_case": record.get("action_plan_case") or {},
+            "action_plan_case": action_plan_case,
+            "navigation_source": record.get("navigation_source") or action_plan_case.get("navigation_source"),
+            "navigation_status": record.get("navigation_status") or action_plan_case.get("navigation_status"),
+            "navigation_policy": record.get("navigation_policy") or action_plan_case.get("navigation_policy"),
+            "execution_mode": record.get("execution_mode") or record.get("action_mode"),
+            "observation_requested": record.get("observation_requested", False),
             "executor_status": record.get("status"),
             "actual": record.get("actual") or record.get("observation"),
             "page_observation": record.get("page_observation"),
+            "execution_trace": record.get("execution_trace") or [],
+            "observation_trace": record.get("observation_trace") or [],
             "action_trace": record.get("action_trace") or [],
             "llm_retest": record.get("llm_retest") or {},
             "evidence": [
@@ -115,9 +125,11 @@ def build_review_queue(
             else None
         ),
         "llm_instruction": (
-            "逐条读取 expected、navigation_context、action_trace、page_observation 和 evidence 截图；"
+            "逐条读取 expected、navigation_context、execution_trace、observation_trace、page_observation 和 evidence 截图；"
             "若存在 action_plan_case，只把它当作首轮历史参考。"
             "先判断截图是否为目标页面，再判断动作效果和预期结果。不要根据 executor_status 直接通过，"
+            "observe 事件只是执行期间请求采集页面事实的证据，observation_requested 和 execution_mode 必须分开读取，"
+            "不能因为 observe 存在或缺失直接改变最终 verdict；"
             "也不能用 LLM 结果覆盖确定性页面/动作阻塞。每项必须返回 JSON；reason 必须是非空的具体判断理由，"
             "并会被回填到 AI实测结果的‘判断理由’段落。默认使用 review_agent_default 中的 Agent 和 model；"
             "复测阶段如存在 llm_retest 记录，只把它当作执行事实；复核必须创建独立的只读会话，"

@@ -27,3 +27,15 @@ anchors:
       orientation: portrait
     last_verified: "2026-08-26"
     app_version: "8.05.001"
+
+  - key: quote.kline_settings
+    meaning: 打开K线设置面板
+    screen: quote.kline
+    visual_description: K线页面中的齿轮形设置按钮
+    nearby_text: ""
+    reference_image: visual/kline_settings.png
+    action: tap_center
+    verify_after:
+      screen: quote.kline_settings
+    last_verified: "2026-09-15"
+    app_version: "10.5.4"

@@ -75,6 +75,25 @@ def test_review_queue_is_row_scoped():
     assert queue["queue_binding"]["queue_id"].startswith("queue-")
 
 
+def test_llm_review_keeps_observe_out_of_terminal_execution_result():
+    document = _execution()
+    document["cases"][0].update(
+        {
+            "execution_mode": "agent",
+            "observation_requested": True,
+            "action_trace": [{"type": "observe", "result": "success"}],
+            "observation_trace": [{"type": "observe", "result": "success"}],
+            "execution_trace": [],
+        }
+    )
+    queue = build_review_queue(document, run_dir="output/run")
+
+    result = merge_reviews(document, _review(queue), queue)
+
+    assert result["cases"][0]["status"] == "⛔阻塞"
+    assert "真实 execution_trace/action_trace" in result["cases"][0]["llm_review"]["reason"]
+
+
 def test_review_queue_exposes_run_agent_default():
     document = _execution()
     document["execution_manifest"]["agent_binding"] = {

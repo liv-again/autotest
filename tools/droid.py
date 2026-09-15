@@ -93,13 +93,21 @@ def parse(xml):
         rid  = a.get("resource-id") or ""
         clk  = a.get("clickable") == "true"
         scr  = a.get("scrollable") == "true"
+        focused = a.get("focused") == "true"
+        focusable = a.get("focusable") == "true"
+        enabled = a.get("enabled") != "false"
+        visible = a.get("visible-to-user") != "false"
+        selected = a.get("selected") == "true"
+        checked = a.get("checked") == "true"
         cls  = (a.get("class") or "").split(".")[-1]
         c = _bounds_center(a.get("bounds"))
         if not c: continue
         if not (text or desc or clk or scr or rid): continue
         els.append({"cx":c[0],"cy":c[1],"text":text,"desc":desc,
                     "id":rid.split("/")[-1] if "/" in rid else rid,
-                    "cls":cls,"clk":clk,"scr":scr,"bounds":a.get("bounds")})
+                    "cls":cls,"clk":clk,"scr":scr,"focused":focused,
+                    "focusable":focusable,"enabled":enabled,"visible":visible,
+                    "selected":selected,"checked":checked,"bounds":a.get("bounds")})
     return els
 
 def screen():
@@ -122,7 +130,13 @@ def find(kw):
 def tap_text(kw):
     """找到包含kw的节点；若自身不可点，回退到其可点击祖先——这里简化为点该节点中心。"""
     els = parse(dump_xml())
-    cand = [e for e in els if kw in e["text"] or kw in e["desc"]]
+    cand = [
+        e
+        for e in els
+        if e.get("visible", True)
+        and e.get("enabled", True)
+        and (kw in e["text"] or kw in e["desc"])
+    ]
     cand.sort(key=lambda e: (not e["clk"], len(e["text"] or e["desc"])))  # 优先可点击、文本最短(最精确)
     if not cand:
         print(f"tap: 未找到 '{kw}'"); return 1
@@ -133,7 +147,13 @@ def tap_text(kw):
 
 def tap_id(rid):
     els = parse(dump_xml())
-    cand = [e for e in els if e["id"] == rid or rid in e["id"]]
+    cand = [
+        e
+        for e in els
+        if e.get("visible", True)
+        and e.get("enabled", True)
+        and (e["id"] == rid or rid in e["id"])
+    ]
     if not cand:
         print(f"tap: 未找到 id '{rid}'"); return 1
     e = cand[0]; adb("shell","input","tap",str(e["cx"]),str(e["cy"]))

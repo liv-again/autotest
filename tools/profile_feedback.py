@@ -60,6 +60,63 @@ def _successful_runtime_recovery(attempt: Mapping[str, Any]) -> bool:
     return _text(attempt.get("result")).casefold() == "recovered"
 
 
+def _navigation_feedback(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarise the route that was planned and the proof collected for it.
+
+    A route is only marked proven when the row trace contains a successful
+    post-navigation target-page assertion.  A successful tap, or a page that
+    happened to contain a common label, is not enough to promote a profile.
+    """
+
+    plans = [
+        record.get("action_plan_case")
+        for record in records
+        if isinstance(record.get("action_plan_case"), Mapping)
+    ]
+    sources = _unique([_text(plan.get("navigation_source")) for plan in plans])
+    statuses = _unique([_text(plan.get("navigation_status")) for plan in plans])
+    profile_keys = _unique([_text(plan.get("profile_entry_key")) for plan in plans])
+    planned_steps = next(
+        (
+            plan.get("navigation") or []
+            for plan in plans
+            if isinstance(plan.get("navigation"), list) and plan.get("navigation")
+        ),
+        [],
+    )
+    successful_post_gates = 0
+    route_execution_count = 0
+    for record in records:
+        trace = record.get("navigation_trace")
+        if not isinstance(trace, list):
+            continue
+        if any(
+            item.get("type") == "assert"
+            and item.get("result") == "success"
+            and any(token in _text(item.get("detail")) for token in ("导航后", "恢复导航后"))
+            for item in trace
+            if isinstance(item, Mapping)
+        ):
+            successful_post_gates += 1
+        if any(
+            item.get("type") in {"tap", "orientation", "swipe", "wait", "key", "observe", "assert"}
+            and item.get("result") == "success"
+            for item in trace
+            if isinstance(item, Mapping)
+        ):
+            route_execution_count += 1
+    proven = bool(successful_post_gates and route_execution_count)
+    return {
+        "sources": sources,
+        "statuses": statuses,
+        "profile_entry_keys": profile_keys,
+        "planned_steps": planned_steps,
+        "route_execution_count": route_execution_count,
+        "successful_post_navigation_gate_count": successful_post_gates,
+        "proven": proven,
+    }
+
+
 def build_profile_feedback(
     document: Mapping[str, Any] | list[Any],
     *,
@@ -168,6 +225,7 @@ def build_profile_feedback(
         statuses = [_text(record.get("status")) for record in usable]
         success_count = sum(1 for status in statuses if _status_is_success(status))
         candidate_status = "verified" if success_count == len(usable) and len(usable) >= 2 else "unverified"
+        navigation_feedback = _navigation_feedback(usable)
         dates = sorted(_text(record.get("tested_at"))[:10] for record in usable if _text(record.get("tested_at")))
         last_verified = dates[-1] if dates else datetime.now(CN_TZ).date().isoformat()
         suggested = {
@@ -177,6 +235,10 @@ def build_profile_feedback(
             "app_version": app_version,
             "evidence_run": str(run_path).replace("\\", "/"),
             "status": candidate_status,
+            "navigation_source": (navigation_feedback["sources"] or ["legacy_declared"])[0],
+            "navigation_status": "verified" if navigation_feedback["proven"] else "unverified",
+            "profile_entry_keys": navigation_feedback["profile_entry_keys"],
+            "navigation": navigation_feedback["planned_steps"],
         }
         feedback.append(
             {
@@ -190,6 +252,7 @@ def build_profile_feedback(
                     [],
                 ),
                 "display_path": display_path,
+                "navigation_feedback": navigation_feedback,
                 "observed_page_signatures": observations,
                 "observed_rows": [
                     {"sheet": record.get("sheet"), "row": record.get("row"), "case_id": record.get("case_id")}

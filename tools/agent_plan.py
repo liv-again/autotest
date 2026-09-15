@@ -30,6 +30,19 @@ PLAN_TYPE = "agent_action_plan"
 PLANNER_MODEL_CONFIG_PATH = Path(__file__).resolve().with_name("agent_model_config.yaml")
 DEFAULT_PLANNER_MODEL = "gpt-5.6-luna"
 
+# Navigation provenance is deliberately part of the plan contract.  The
+# executor must be able to tell whether a route came from a verified App
+# profile or was inferred for this run; otherwise a natural-language profile
+# hint can silently turn into an un-audited route.
+NAVIGATION_SOURCES = frozenset(
+    {"profile", "llm_inferred", "profile_plus_llm", "not_required", "legacy_declared"}
+)
+NAVIGATION_STATUSES = frozenset(
+    {"verified", "unverified", "partial", "unknown", "not_required"}
+)
+NAVIGATION_POLICIES = frozenset({"required", "if_needed"})
+TARGET_GATE_MODES = frozenset({"exact", "composite", "weak"})
+
 class AgentPlanError(ValueError):
     """Raised when an Agent plan is missing, stale, or unsafe to execute."""
 
@@ -219,6 +232,40 @@ def validate_target_page(target: Any, *, location: str) -> dict[str, Any]:
         result["orientation"] = orientation
     else:
         result.pop("orientation", None)
+    gate_mode = _text(target.get("gate_mode")).casefold()
+    if not gate_mode:
+        # Existing plans remain readable, but a target made only from
+        # ``any_*``/free text is explicitly marked weak.  The runtime will not
+        # use such a target to skip declared navigation.
+        gate_mode = (
+            "exact"
+            if result.get("selected_text") or result.get("selected_ids") or result.get("all_ids")
+            else "weak"
+        )
+    if gate_mode not in TARGET_GATE_MODES:
+        raise AgentPlanError(
+            f"{location}.gate_mode={gate_mode!r} 不受支持；允许: {', '.join(sorted(TARGET_GATE_MODES))}"
+        )
+    positive_identity_count = sum(
+        len(result.get(key) or [])
+        for key in ("all_text", "all_ids", "selected_text", "selected_ids")
+    )
+    stable_identity_count = sum(
+        len(result.get(key) or [])
+        for key in ("all_ids", "selected_text", "selected_ids")
+    )
+    if gate_mode == "exact" and stable_identity_count == 0:
+        raise AgentPlanError(
+            f"{location}.gate_mode=exact 必须包含 all_ids/selected_text/selected_ids；"
+            "单个普通文字只能作为 weak 门禁"
+        )
+    if gate_mode == "composite" and positive_identity_count == 0:
+        raise AgentPlanError(
+            f"{location}.gate_mode={gate_mode} 必须包含 all_text/all_ids/selected_text/selected_ids"
+        )
+    if gate_mode == "composite" and positive_identity_count < 2:
+        raise AgentPlanError(f"{location}.gate_mode=composite 至少需要两个正向页面条件")
+    result["gate_mode"] = gate_mode
     criteria = sum(
         len(result.get(key) or [])
         for key in (
@@ -267,6 +314,50 @@ def validate_case_plan(item: Any, *, location: str) -> dict[str, Any]:
         validate_action(action, location=f"{location}.recovery_navigation[{index}]")
         for index, action in enumerate(recovery_navigation)
     ]
+    navigation_source = _text(item.get("navigation_source")).casefold()
+    if not navigation_source:
+        navigation_source = "legacy_declared" if navigation else "not_required"
+    if navigation_source not in NAVIGATION_SOURCES:
+        raise AgentPlanError(
+            f"{location}.navigation_source={navigation_source!r} 不受支持；允许: "
+            f"{', '.join(sorted(NAVIGATION_SOURCES))}"
+        )
+    navigation_status = _text(item.get("navigation_status")).casefold()
+    if not navigation_status:
+        navigation_status = "unknown" if navigation else "not_required"
+    if navigation_status not in NAVIGATION_STATUSES:
+        raise AgentPlanError(
+            f"{location}.navigation_status={navigation_status!r} 不受支持；允许: "
+            f"{', '.join(sorted(NAVIGATION_STATUSES))}"
+        )
+    navigation_policy = _text(item.get("navigation_policy")).casefold()
+    if not navigation_policy:
+        # A declared route is executable work.  ``if_needed`` is an explicit
+        # opt-in for a strong page gate and is used only when reusing a group.
+        navigation_policy = "required" if navigation else "if_needed"
+    if navigation_policy not in NAVIGATION_POLICIES:
+        raise AgentPlanError(
+            f"{location}.navigation_policy={navigation_policy!r} 不受支持；允许: "
+            f"{', '.join(sorted(NAVIGATION_POLICIES))}"
+        )
+    if navigation_source in {"profile", "llm_inferred", "profile_plus_llm"} and not navigation:
+        raise AgentPlanError(
+            f"{location} 的 navigation_source={navigation_source} 必须提供可执行 navigation"
+        )
+    if navigation_source == "not_required" and navigation:
+        raise AgentPlanError(f"{location} 标记 navigation_source=not_required 但仍提供了 navigation")
+    if navigation_policy == "required" and not navigation:
+        raise AgentPlanError(f"{location} 标记 navigation_policy=required 但 navigation 为空")
+    profile_entry_key = _text(item.get("profile_entry_key"))
+    if navigation_source in {"profile", "profile_plus_llm"} and not profile_entry_key:
+        raise AgentPlanError(
+            f"{location}.profile_entry_key 不能为空；profile 路径必须能回溯到画像 entry"
+        )
+    result["navigation_source"] = navigation_source
+    result["navigation_status"] = navigation_status
+    result["navigation_policy"] = navigation_policy
+    if profile_entry_key:
+        result["profile_entry_key"] = profile_entry_key
     result["actions"] = [
         validate_action(action, location=f"{location}.actions[{index}]")
         for index, action in enumerate(actions)
@@ -334,6 +425,21 @@ def validate_action_plan(
                 "Agent 计划与当前 App profile 不一致: "
                 f"plan={profile_hash}, current={actual_profile_hash}"
             )
+    profile_entry_keys: set[str] | None = None
+    if profile_path is not None:
+        try:
+            profile_document = yaml.safe_load(
+                Path(profile_path).expanduser().resolve().read_text(encoding="utf-8")
+            ) or {}
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+            raise AgentPlanError(f"无法读取 App profile 以校验导航来源: {exc}") from exc
+        if not isinstance(profile_document, Mapping):
+            raise AgentPlanError("App profile 必须是 YAML 对象")
+        profile_entry_keys = {
+            _text(entry.get("key"))
+            for entry in (profile_document.get("entries") or [])
+            if isinstance(entry, Mapping) and _text(entry.get("key"))
+        }
 
     plan_cases = plan.get("cases")
     if not isinstance(plan_cases, list):
@@ -342,6 +448,15 @@ def validate_action_plan(
     group_sheets: dict[str, str] = {}
     for index, item in enumerate(plan_cases, start=1):
         validated = validate_case_plan(item, location=f"cases[{index}]")
+        if validated["navigation_source"] in {"profile", "profile_plus_llm"}:
+            if profile_entry_keys is None:
+                raise AgentPlanError(
+                    f"cases[{index}] 使用 {validated['navigation_source']}，但本次没有提供 profile"
+                )
+            if validated.get("profile_entry_key") not in profile_entry_keys:
+                raise AgentPlanError(
+                    f"cases[{index}].profile_entry_key={validated.get('profile_entry_key')!r} 不存在于当前 App profile"
+                )
         key = _case_key(validated)
         if key in by_key:
             raise AgentPlanError(f"Agent 计划存在重复用例: {key[2]}!{key[1]}")
@@ -416,14 +531,29 @@ def build_agent_context(
         }
     context["agent_prompt"] = (
         "你是当前选定的 Agent。先读取本 context 中每条 Excel 用例的实际字段和 App 画像，"
-        "为每条需要执行的用例生成一个 agent_action_plan。navigation 只放公共导航，"
+        "为每条需要执行的用例生成一个 agent_action_plan。导航必须遵守 profile-first 策略："
+        "如果 app_profile_entries 或 profile_hints 中存在与本行目录层级、入口或前置条件匹配的明确 path，"
+        "按该画像路径翻译为可执行低层 navigation，并填写 navigation_source=profile、"
+        "profile_entry_key，并把画像 status 映射为 navigation_status=verified 或 unverified/partial；"
+        "如果画像没有明确路径，必须结合本行 Excel 字段"
+        "以及 TC 前的一级至四级目录、entry、precondition、step_name 推理完整路径，"
+        "填写 navigation_source=llm_inferred、navigation_status=unverified，不能只点击目标文字。"
+        "如果画像路径和本次推理共同组成路线，使用 profile_plus_llm。"
+        "navigation 只放公共导航，"
         "actions 只放本行实际动作；二者都必须使用允许的低层动作类型，不能把 Excel 原文"
-        "直接交给执行器解析。target_page 必须给出可由 UI 树/截图观察的条件；"
+        "直接交给执行器解析。只要 navigation 非空，默认会执行该路线；只有显式填写"
+        "navigation_policy=if_needed 且当前页满足强门禁时才允许复用。target_page 必须给出"
+        "可由 UI 树/截图观察的强页面条件，优先使用 selected_text/selected_ids 或稳定 resource-id，"
+        "需要组合文字时填写 gate_mode=composite；不要用任一公共文字作为唯一门禁。"
+        "每个导航步骤应尽量填写 after 页面条件，以便证明路径确实有效。"
         "expected_observations 用于执行后截图复核。请同时读取"
         "generic_planning_knowledge：涉及横屏列表时不要把标题作为唯一门禁；"
         "涉及滑动时比较滑动前后第一行股票名称和代码；目标元素未找到时按回到顶部后最多三屏、"
         "每屏查找一次的顺序规划；涉及排序时比较表头点击前后的前两条数据及指定字段的相反顺序。"
         "这些规则只在适用时加入计划，必须落实为可观察的前后检查，不能用动作调用成功替代结果验证。"
+        "observe 只是要求采集一条页面事实的证据动作，不是 execution_mode，也不直接决定最终 status；"
+        "若没有真实执行事件，执行门禁不会把纯观察认定为已执行；最终结果由页面门禁、真实动作、"
+        "独立证据和语义复核共同决定。"
         f"规划元数据 planner.model 必须填写实际使用模型的精确 wire ID；当前项目默认值为"
         f" {planner_model_defaults['model']}，配置来源为 {planner_model_defaults['source']}。"
         "如果明确选择了其他 Agent/runtime，填写其实际模型 ID，不要填写界面显示别名。"

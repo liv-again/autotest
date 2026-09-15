@@ -116,9 +116,34 @@ def _policy_int(section: str, key: str, default: int) -> int:
         return default
 
 
+def _policy_bool(section: str, key: str, default: bool) -> bool:
+    value = _EXECUTION_POLICY.get(section, {})
+    if not isinstance(value, dict) or key not in value:
+        return default
+    raw = value.get(key)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        normalized = raw.strip().casefold()
+        if normalized in {"true", "yes", "1", "on"}:
+            return True
+        if normalized in {"false", "no", "0", "off"}:
+            return False
+    return default
+
+
 MAX_SOFT_BACK = _policy_int("state_reset", "max_soft_back", MAX_SOFT_BACK)
 PAGE_READY_RETRIES = _policy_int("page_gate", "page_ready_retries", PAGE_READY_RETRIES)
 MAX_ACTION_RETRIES = _policy_int("page_gate", "max_action_retries", 1)
+REQUIRE_NAVIGATION_WHEN_DECLARED = _policy_bool(
+    "page_gate", "require_navigation_when_declared", True
+)
+REQUIRE_STRONG_POST_NAVIGATION_GATE = _policy_bool(
+    "page_gate", "require_strong_post_navigation_gate", True
+)
+FAIL_CLOSED_ON_WEAK_TARGET_GATE = _policy_bool(
+    "page_gate", "fail_closed_on_weak_target_gate", True
+)
 
 
 def now() -> str:
@@ -813,13 +838,18 @@ def build_actual(
     intentionally not accepted as an input here.
     """
 
-    steps = [_action_step(item) for item in action_events]
+    # Observation and evidence events are persisted separately from the
+    # human-facing execution steps.  They describe what was captured, not a
+    # business operation that should be echoed as the final result.
+    steps = [_action_step(item) for item in _execution_trace(action_events)]
     steps = [step for step in steps if step]
     if not steps:
         if not setup_ok:
             steps = [f"本行未执行：目标页面前置校验失败{f'（{error_detail}）' if error_detail else ''}"]
         elif not action_ok:
             steps = [f"本行动作未完成{f'：{error_detail}' if error_detail else ''}"]
+        elif observation_requested(action_events):
+            steps = ["本行未执行真实业务动作，仅采集页面状态（观察证据已单独记录）"]
         else:
             steps = ["采集执行后页面状态"]
 
@@ -845,6 +875,8 @@ def executor_judgment_reason(
     blocked_reason: str = "",
     probe: bool = False,
     agent_plan: bool = False,
+    observation_was_requested: bool = False,
+    execution_was_performed: bool = False,
 ) -> str:
     """Create a grounded reason for the executor's preliminary verdict."""
 
@@ -852,14 +884,17 @@ def executor_judgment_reason(
         return blocked_reason or error_detail or "目标页、动作或独立证据门禁未完成"
     if probe or action_mode == "probe":
         return "目标页门禁和独立截图均已完成；本次未执行业务动作，仅证明导航可达"
+    if observation_was_requested and not execution_was_performed:
+        return "本行仅采集 observe 观察证据，未执行真实业务动作；观察事实已单独记录，不能形成最终结果"
     if agent_plan:
-        return (
+        reason = (
             "当前 Agent 已将本行 Excel 内容解析为结构化动作并完成设备执行，"
             "已采集执行后页面和独立截图；最终通过/不通过必须由当前 Agent 依据本行截图、"
             "页面观察、实际动作和预期结果逐行复核，当前不自动判定为通过"
         )
-    if status == "🟡待验证" and action_mode == "observe":
-        return "该行是显式观察步骤，已采集执行后页面事实和独立截图，但仍需按预期条件完成语义确认"
+        if observation_was_requested:
+            reason += "；observe 仅记录为观察证据，不改变执行模式或最终状态"
+        return reason
     if status == "⚠️部分通过":
         return "已完成目标页校验、业务动作和独立截图，但缺少外部基准或所需交易时段，无法完成全部预期核对"
     if status == "✅通过":
@@ -905,17 +940,122 @@ def _page_value_matches(elements: list[dict], value: str, *, resource_id: bool =
         return False
     if resource_id:
         return any(
+            element.get("visible", True) is not False
+            and (
             expected == str(element.get("id") or "")
             or expected == str(element.get("id") or "").split("/")[-1]
+            )
             for element in elements
         )
     return any(
+        element.get("visible", True) is not False
+        and (
         expected == str(element.get("text") or "").strip()
         or expected == str(element.get("desc") or "").strip()
         or expected in str(element.get("text") or "")
         or expected in str(element.get("desc") or "")
+        )
         for element in elements
     )
+
+
+def _selected_page_value_matches(
+    elements: list[dict], value: str, *, resource_id: bool = False
+) -> bool:
+    """Match a selected, visible node from the same UI-tree snapshot."""
+
+    expected = str(value).strip()
+    if not expected:
+        return False
+    for element in elements:
+        if element.get("visible", True) is False or element.get("selected") is not True:
+            continue
+        if resource_id:
+            actual = str(element.get("id") or "")
+            if expected == actual or expected == actual.split("/")[-1]:
+                return True
+        elif (
+            expected == str(element.get("text") or "").strip()
+            or expected == str(element.get("desc") or "").strip()
+        ):
+            return True
+    return False
+
+
+def agent_target_gate_strength(target_page: Mapping[str, Any]) -> str:
+    """Return the quality of an Agent target-page identity contract.
+
+    ``any_text`` and a common title are useful diagnostics but are not strong
+    enough to decide that navigation can be skipped.  Agents can explicitly
+    declare a composite or exact gate; selected nodes and resource IDs are
+    inherently stronger even for old plans that have no ``gate_mode``.
+    """
+
+    explicit = str(target_page.get("gate_mode") or "").casefold()
+    positive_identity_count = sum(
+        len(target_page.get(key) or [])
+        for key in ("all_text", "all_ids", "selected_text", "selected_ids")
+    )
+    stable_identity = bool(
+        target_page.get("selected_text")
+        or target_page.get("selected_ids")
+        or target_page.get("all_ids")
+    )
+    if explicit == "composite" and positive_identity_count >= 2:
+        return "composite"
+    if explicit == "exact" and stable_identity:
+        return "exact"
+    if stable_identity:
+        return "exact"
+    return "weak"
+
+
+def observation_requested(events: Iterable[Mapping[str, Any]]) -> bool:
+    """Whether the plan explicitly requested an observation event.
+
+    This is evidence metadata only.  It must never be used as the execution
+    mode or as a standalone final verdict.
+    """
+
+    return any(
+        str(item.get("type") or "").casefold() == "observe"
+        and str(item.get("result") or "").casefold() == "success"
+        for item in events
+        if isinstance(item, Mapping)
+    )
+
+
+def _observation_trace(events: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        dict(item)
+        for item in events
+        if isinstance(item, Mapping)
+        and str(item.get("type") or "").casefold() in {"observe", "llm_observation"}
+    ]
+
+
+_NON_EXECUTION_TRACE_TYPES = frozenset(
+    {
+        "observe",
+        "evidence",
+        "probe",
+        "llm_observation",
+        "llm_request",
+        "llm_protocol",
+        "llm_decision",
+    }
+)
+
+
+def _execution_trace(events: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Return execution events without observation/evidence bookkeeping."""
+
+    return [
+        dict(item)
+        for item in events
+        if isinstance(item, Mapping)
+        and str(item.get("type") or "").casefold() not in _NON_EXECUTION_TRACE_TYPES
+    ]
 
 
 def agent_target_match(target_page: dict, elements: list[dict]) -> tuple[bool, str]:
@@ -943,23 +1083,11 @@ def agent_target_match(target_page: dict, elements: list[dict]) -> tuple[bool, s
             present_forbidden.append(f"id:{value}")
 
     for value in target_page.get("selected_text") or []:
-        if not selected_label(str(value)):
+        if not _selected_page_value_matches(elements, str(value)):
             missing.append(f"选中文字:{value}")
-    if target_page.get("selected_ids"):
-        try:
-            root = ET.fromstring(droid.dump_xml())
-            selected_ids = {
-                (node.attrib.get("resource-id") or "").split("/")[-1]
-                for node in root.iter("node")
-                if node.attrib.get("selected") == "true"
-                and node.attrib.get("resource-id")
-            }
-        except Exception:
-            selected_ids = set()
-        for value in target_page.get("selected_ids") or []:
-            expected = str(value).split("/")[-1]
-            if expected not in selected_ids:
-                missing.append(f"选中id:{value}")
+    for value in target_page.get("selected_ids") or []:
+        if not _selected_page_value_matches(elements, str(value), resource_id=True):
+            missing.append(f"选中id:{value}")
 
     orientation = str(target_page.get("orientation") or "").casefold()
     if orientation:
@@ -1012,7 +1140,8 @@ def execute_agent_actions(
 
     This function intentionally has no Excel-text parser and no fallback
     branch. If the Agent did not provide an action, the caller receives a
-    blocked result instead of an inferred tap or an observe-only pass.
+    blocked result instead of an inferred tap.  ``observe`` is recorded as an
+    evidence request, but it never changes the returned execution mode.
     """
 
     if not actions:
@@ -1020,7 +1149,6 @@ def execute_agent_actions(
         event(events, "executor", phase, "failed", detail)
         return False, detail, "agent"
 
-    observed = False
     for index, spec in enumerate(actions, start=1):
         action_type = str(spec.get("type") or "")
         target = str(
@@ -1058,7 +1186,6 @@ def execute_agent_actions(
         elif action_type == "wait":
             ok = wait_action(events, float(spec["seconds"]))
         elif action_type == "observe":
-            observed = True
             event(events, "observe", target, "success", f"Agent {phase}明确要求采集页面状态")
             ok = True
         elif action_type == "assert_text":
@@ -1082,15 +1209,15 @@ def execute_agent_actions(
             if control_not_found:
                 detail += "；控件或断言目标未在当前 UI 树找到"
             event(events, "executor", phase, "failed", detail)
-            return False, detail, "observe" if observed else "agent"
+            return False, detail, "agent"
 
         after = spec.get("after")
         if after and not wait_for_agent_target(events, after, phase=f"{phase}第{index}步后"):
             detail = f"Agent {phase}动作第{index}步后页面断言失败"
             event(events, "executor", phase, "failed", detail)
-            return False, detail, "observe" if observed else "agent"
+            return False, detail, "agent"
 
-    return True, "", "observe" if observed else "agent"
+    return True, "", "agent"
 
 
 def setup_agent_case(
@@ -1126,17 +1253,68 @@ def setup_agent_case(
         session.active_page_group_key = group_key
         event(events, "page_group", group_id, "success", f"进入 Agent 导航分组：{group_key}")
 
-    target_page = case_plan["target_page"]
-    if wait_for_agent_target(events, target_page, phase="当前状态"):
-        return True
-
     navigation = case_plan.get("navigation") or []
+    target_page = case_plan["target_page"]
+    gate_strength = agent_target_gate_strength(target_page)
+    navigation_source = str(case_plan.get("navigation_source") or "legacy_declared")
+    navigation_status = str(case_plan.get("navigation_status") or "unknown")
+    navigation_policy = str(
+        case_plan.get("navigation_policy") or ("required" if navigation else "if_needed")
+    ).casefold()
+    event(
+        events,
+        "navigation_contract",
+        group_id,
+        "attempt",
+        f"来源={navigation_source}；状态={navigation_status}；策略={navigation_policy}；目标页门禁={gate_strength}",
+    )
+
+    # A required route is the source of truth for this case.  Do not spend a
+    # pre-navigation gate on the current screen: a broad label can make the
+    # runner believe it is already on the page and silently skip the route.
+    current_match = False
+    if not navigation or navigation_policy != "required" or not REQUIRE_NAVIGATION_WHEN_DECLARED:
+        current_match = wait_for_agent_target(events, target_page, phase="当前状态")
+    else:
+        event(
+            events,
+            "page_gate",
+            group_id,
+            "skipped",
+            "navigation_policy=required：先执行声明的导航路线，再进行目标页后置门禁",
+        )
+    if current_match and not navigation:
+        if gate_strength == "weak" and FAIL_CLOSED_ON_WEAK_TARGET_GATE:
+            event(
+                events,
+                "page_gate",
+                group_id,
+                "failed",
+                "目标页条件过弱且没有可执行 navigation，拒绝把公共文字当作已到达目标页",
+            )
+            return False
+        return True
+    if current_match and navigation and navigation_policy == "if_needed" and gate_strength != "weak":
+        event(events, "navigation_skip", group_id, "success", "当前页满足强门禁，按 if_needed 策略复用导航")
+        return True
     if not navigation:
         event(events, "replan", group_id, "failed", "当前页不匹配且 Agent 未提供 navigation")
         return False
     ok, detail, _ = execute_agent_actions(events, navigation, phase="公共导航")
-    if ok and wait_for_agent_target(events, target_page, phase="公共导航后"):
-        return True
+    if ok:
+        post_navigation_match = wait_for_agent_target(events, target_page, phase="公共导航后")
+        if post_navigation_match and (
+            not REQUIRE_STRONG_POST_NAVIGATION_GATE or gate_strength != "weak"
+        ):
+            return True
+        if post_navigation_match:
+            event(
+                events,
+                "page_gate",
+                group_id,
+                "failed",
+                "导航后虽然命中文字，但目标页门禁过弱，拒绝确认路径有效",
+            )
 
     # A failed route gets one bounded recovery.  This is still the exact
     # Agent plan (or its explicitly authored recovery_navigation), never a
@@ -1148,7 +1326,11 @@ def setup_agent_case(
         return False
     recovery = case_plan.get("recovery_navigation") or navigation
     recovery_ok, recovery_detail, _ = execute_agent_actions(events, recovery, phase="恢复导航")
-    if recovery_ok and wait_for_agent_target(events, target_page, phase="恢复导航后"):
+    if recovery_ok and (
+        not REQUIRE_STRONG_POST_NAVIGATION_GATE or gate_strength != "weak"
+    ) and wait_for_agent_target(
+        events, target_page, phase="恢复导航后"
+    ):
         event(events, "replan", group_id, "success", "恢复导航后 Agent 目标页校验通过")
         return True
     event(
@@ -1934,6 +2116,7 @@ def main(argv: list[str] | None = None) -> int:
                     error_detail = ""
                     page_observation = "未获取到可用的页面观察"
                     observation = ""
+                    observation_was_requested = False
                     elements: list[dict] = []
                     llm_retest_result: dict[str, Any] | None = None
                     try:
@@ -2051,6 +2234,12 @@ def main(argv: list[str] | None = None) -> int:
                                 action_ok, error_detail, action_mode = execute_action(
                                     action_events, sheet_name, row, case
                                 )
+                                # Legacy adapters historically returned
+                                # ``observe`` as a mode.  Keep their event for
+                                # evidence, but normalize the persisted mode so
+                                # observation cannot masquerade as execution.
+                                if action_mode == "observe":
+                                    action_mode = "legacy"
                         else:
                             failed_setup = next(
                                 (
@@ -2068,6 +2257,10 @@ def main(argv: list[str] | None = None) -> int:
                         action_ok = False
                         event(action_events, "executor", f"{sheet_name}!{row}", "failed", error_detail)
                         page_observation = "未获取到可用的页面观察"
+
+                    observation_was_requested = observation_requested(
+                        [*setup_events, *action_events]
+                    )
 
                     evidence_path = shots / f"{sheet_name}_row_{row:03d}.png"
                     shot_ok = take_shot(evidence_path)
@@ -2101,6 +2294,9 @@ def main(argv: list[str] | None = None) -> int:
                     elif args.probe:
                         status = "✅通过"
                         blocked_reason = ""
+                    elif observation_was_requested and not _execution_trace(action_events):
+                        status = "🟡待验证"
+                        blocked_reason = "本行仅采集 observe 观察证据，未执行真实业务动作；不能据此形成最终结果"
                     elif args.action_plan:
                         # A successful low-level action is not a semantic
                         # verdict.  Leave this row for the Agent's screenshot /
@@ -2108,9 +2304,6 @@ def main(argv: list[str] | None = None) -> int:
                         # produce an immediate blocked status here.
                         status = "🟡待验证"
                         blocked_reason = ""
-                    elif action_mode == "observe":
-                        status = "🟡待验证"
-                        blocked_reason = "该行是显式观察类步骤，需根据页面事实确认预期结果"
                     elif verification_only:
                         status = "⚠️部分通过"
                         blocked_reason = "已实际进入页面并执行操作，但本轮缺少外部基准或所需交易时段，无法完成全部预期核对"
@@ -2135,6 +2328,8 @@ def main(argv: list[str] | None = None) -> int:
                             blocked_reason=blocked_reason,
                             probe=args.probe,
                             agent_plan=bool(args.action_plan),
+                            observation_was_requested=observation_was_requested,
+                            execution_was_performed=bool(_execution_trace(action_events)),
                         )
                     if (
                         stepwise_retest
@@ -2182,7 +2377,9 @@ def main(argv: list[str] | None = None) -> int:
                             if args.action_plan
                             else "legacy_deterministic_explicit"
                         ),
+                        "execution_mode": action_mode,
                         "action_mode": action_mode,
+                        "observation_requested": observation_was_requested,
                         "actual": observation,
                         "observation": observation,
                         "judgment_reason": judgment_reason,
@@ -2193,13 +2390,34 @@ def main(argv: list[str] | None = None) -> int:
                         },
                         "page_observation": page_observation,
                         "evidence": [str(evidence_path).replace("\\", "/")],
+                        "navigation_trace": setup_events,
+                        "observation_trace": _observation_trace([*setup_events, *action_events]),
+                        "execution_trace": _execution_trace(action_events),
                         "action_trace": action_events,
                         "tested_at": now(),
                     }
                     if action_case_plan is not None and not stepwise_retest:
+                        navigation_source = action_case_plan.get("navigation_source") or "legacy_declared"
+                        navigation_status = action_case_plan.get("navigation_status") or "unknown"
+                        navigation_policy = action_case_plan.get("navigation_policy") or "required"
+                        record.update(
+                            {
+                                "navigation_source": navigation_source,
+                                "navigation_status": navigation_status,
+                                "navigation_policy": navigation_policy,
+                                "page_gate_strength": agent_target_gate_strength(
+                                    action_case_plan.get("target_page") or {}
+                                ),
+                            }
+                        )
                         record["action_plan_case"] = {
                             "target_page": action_case_plan.get("target_page"),
                             "navigation": action_case_plan.get("navigation") or [],
+                            "recovery_navigation": action_case_plan.get("recovery_navigation") or [],
+                            "navigation_source": action_case_plan.get("navigation_source") or "legacy_declared",
+                            "navigation_status": action_case_plan.get("navigation_status") or "unknown",
+                            "navigation_policy": action_case_plan.get("navigation_policy") or "required",
+                            "profile_entry_key": action_case_plan.get("profile_entry_key") or "",
                             "actions": action_case_plan.get("actions") or [],
                             "expected_observations": action_case_plan.get("expected_observations") or [],
                         }

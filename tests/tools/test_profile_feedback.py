@@ -50,6 +50,50 @@ def test_profile_feedback_is_evidence_backed_and_not_direct_write():
     assert candidate["suggested_profile_entry"]["status"] == "verified"
 
 
+def test_profile_feedback_records_proven_route_for_later_profile_promotion():
+    records = []
+    for row in (2, 3):
+        records.append(
+            {
+                "sheet": "行情",
+                "row": row,
+                "case_id": f"行情-row-{row:03d}",
+                "page_group_id": "行情-page-group-001",
+                "page_group_key": "行情|股指",
+                "navigation_context": {"display_path": "行情 / 股指"},
+                "status": "✅通过",
+                "action_trace": [{"type": "tap", "result": "success"}],
+                "navigation_trace": [
+                    {"type": "tap", "result": "success"},
+                    {"type": "assert", "result": "success", "detail": "公共导航后：UI 条件已满足"},
+                ],
+                "action_plan_case": {
+                    "navigation_source": "llm_inferred",
+                    "navigation_status": "unverified",
+                    "profile_entry_key": "",
+                    "navigation": [{"type": "tap_text", "text": "股指"}],
+                },
+                "page_observation": "当前页面观察：股指、国内指数",
+                "evidence": [f"shots/行情_row_{row:03d}.png"],
+                "tested_at": f"2026-09-15T10:0{row}:00+08:00",
+            }
+        )
+
+    result = build_profile_feedback(
+        {"cases": records},
+        run_dir="output/route-proof",
+        app_slug="guotou",
+        app_version="V10.5.4",
+    )
+
+    candidate = result["candidates"][0]
+    assert candidate["navigation_feedback"]["proven"] is True
+    assert candidate["suggested_profile_entry"]["navigation_status"] == "verified"
+    assert candidate["suggested_profile_entry"]["navigation"] == [
+        {"type": "tap_text", "text": "股指"}
+    ]
+
+
 def test_profile_feedback_keeps_successful_runtime_recovery_as_candidate():
     result = build_profile_feedback(
         {

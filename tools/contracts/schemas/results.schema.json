@@ -110,11 +110,26 @@
         "page_group_key": {"type": "string"},
         "navigation_context": {"type": "object"},
         "profile_hints": {"type": "array"},
+        "navigation_source": {
+          "type": "string",
+          "enum": ["profile", "llm_inferred", "profile_plus_llm", "not_required", "legacy_declared"]
+        },
+        "navigation_status": {
+          "type": "string",
+          "enum": ["verified", "unverified", "partial", "unknown", "not_required"]
+        },
+        "navigation_policy": {"type": "string", "enum": ["required", "if_needed"]},
+        "page_gate_strength": {"type": "string", "enum": ["exact", "composite", "weak"]},
         "source_order": {"type": "integer", "minimum": 1},
         "execution_order": {"type": "integer", "minimum": 1},
         "status": {"type": "string", "minLength": 1},
+        "execution_mode": {"type": "string", "minLength": 1},
+        "action_mode": {"type": "string", "minLength": 1},
+        "observation_requested": {"type": "boolean"},
         "observation": {"type": "string"},
         "page_observation": {"type": "string"},
+        "navigation_trace": {"$ref": "#/$defs/trace"},
+        "observation_trace": {"$ref": "#/$defs/trace"},
         "action_trace": {"$ref": "#/$defs/trace"},
         "execution_trace": {"$ref": "#/$defs/trace"},
         "attempt_trace": {"$ref": "#/$defs/trace"},

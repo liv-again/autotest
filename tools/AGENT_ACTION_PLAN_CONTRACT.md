@@ -4,6 +4,9 @@
 为本轮要执行的每一条 Excel 行输出一个 `cases` 项。执行器不再解析
 `action` 字符串。
 
+上下文同时提供完整的 `app_profile_entries` 和按页面组筛选的 `profile_hints`；后者只是
+便利索引，不能因为为空就忽略画像中的明确路径。
+
 规划上下文还包含 `generic_planning_knowledge`。它来自
 `tools/generic_planning_knowledge.yaml`，适用于所有 App。Agent 规划横屏列表、列表滑动、
 目标元素查找或列表排序用例时，必须读取其中适用的规则，并把要求的前后观察写入
@@ -35,6 +38,10 @@
       "row": 2,
       "page_group_id": "港股-agent-group-001",
       "page_group_key": "港股|行情|港股首页",
+      "navigation_source": "profile",
+      "navigation_status": "verified",
+      "navigation_policy": "required",
+      "profile_entry_key": "quote.global_indices",
       "navigation": [
         {"type": "tap_text", "text": "行情"}
       ],
@@ -44,7 +51,9 @@
       "target_page": {
         "description": "港股模块首页",
         "all_text": ["港股"],
-        "any_ids": ["ganggu_page", "title_bar_middle"],
+        "selected_text": ["港股"],
+        "all_ids": ["ganggu_page"],
+        "gate_mode": "exact",
         "orientation": "portrait"
       },
       "actions": [
@@ -68,10 +77,29 @@
 
 `target_page` 只接受 UI 树可观察条件：`all_text`、`any_text`、`not_text`、
 `all_ids`、`any_ids`、`not_ids`、`selected_text`、`selected_ids` 和 `orientation`。
+可选的 `gate_mode` 为 `exact`、`composite` 或 `weak`；`weak` 只能作为诊断条件，
+不能让执行器跳过已声明导航，也不能证明画像路径有效。对于同屏多页签，必须优先使用
+`selected_text`/`selected_ids`；对于无 selected 属性的页面，使用稳定的 `all_ids` 或显式
+`gate_mode=composite` 的组合条件，不能用任一公共文字作为唯一门禁。
 其中 `selected_text`/`selected_ids` 用于多个页签同时可见但只有一个被选中的页面，
 执行器会读取 UIAutomator 的 `selected` 属性进行硬校验。它是硬页面门禁，不等价
 于业务预期判断。业务结果必须由 Agent 读取执行后的截图、`page_observation`、
-`action_trace` 与 Excel `expected` 后写入逐行 `llm_reviews.json`。
+`execution_trace`、`observation_trace` 与 Excel `expected` 后写入逐行 `llm_reviews.json`。
+
+### 导航来源和画像回馈
+
+每个有导航的用例必须填写 `navigation_source`、`navigation_status` 和
+`navigation_policy`：画像存在明确路径时使用 `profile`（并填写 `profile_entry_key`）；
+画像没有路径时，使用本行以及 TC 前的一级至四级目录、入口、前置条件和步骤推理完整路线，
+标记为 `llm_inferred` + `unverified`；两者混合时使用 `profile_plus_llm`。执行器只消费
+低层 `navigation`，不重新解析 Excel 或画像自然语言。导航后的目标页门禁成功会写入
+`navigation_trace`，`profile_feedback.json` 会生成带 route steps、来源、状态和证据的画像候选；
+候选仍需审核后才能更新正式 profile。
+
+`observe` 是动作轨迹中的观察证据请求，不是 `execution_mode`。执行结果同时记录
+`execution_mode`、`execution_trace`、`observation_requested` 和 `observation_trace`；
+`action_trace` 可以保留完整审计轨迹，但执行门禁只把 `execution_trace` 作为真实操作依据。
+观察请求不直接决定最终 status；如果没有真实执行事件，执行门禁不会把纯观察认定为已执行，结果只能留在待验证/阻塞链路。
 
 ## 首轮阻塞项延迟复测
 

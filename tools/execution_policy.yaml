@@ -21,7 +21,6 @@ persist_after_each_case: true
 reset_state_before_each_case: true
 reset_orientation_before_each_case: true
 fail_on_unrecognized_action: true
-allow_observe_only_as_pass: false
 max_action_retries: 1
 allow_infinite_retest: false
 page_grouping:
@@ -80,6 +79,9 @@ page_gate:
   enabled: true
   fail_closed: true
   require_post_navigation_recheck: true
+  require_navigation_when_declared: true
+  require_strong_post_navigation_gate: true
+  fail_closed_on_weak_target_gate: true
   max_navigation_attempts: 1
   page_ready_retries: 5
   max_action_retries: 1

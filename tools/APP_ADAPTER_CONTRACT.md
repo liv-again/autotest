@@ -34,10 +34,11 @@ python tools/_run_three_sheets.py `
 
 Full runs automatically retest first-pass blocked rows once under
 `output/guojin-run/blocked-retest`. The compatibility second pass reuses the
-validated action plan. To let the LLM re-understand and drive each blocked row,
-add `--llm-retest`; that mode starts a fresh retester session per row, sends the
-original Excel facts plus live screenshot/UI-tree observations, and treats the
-old plan as audit-only. Both modes start with fresh setup and merge both
+validated action plan. To let the LLM re-understand each blocked row, add
+`--llm-retest`; that mode starts one retester session for the queue, loads the
+reference context once, then sends each Case's original Excel facts plus its
+fresh screenshot/UI-tree observation and receives one complete Case Plan. The
+old plan remains audit-only. Both modes start with fresh setup and merge both
 attempts into `execution_records.retested.json`.
 Use `--no-auto-retest-blocked` only when inspecting the raw first pass.
 

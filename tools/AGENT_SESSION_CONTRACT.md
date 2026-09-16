@@ -31,43 +31,46 @@ SIXGILL_AGENT_SESSION_FACTORY=your_host_module:create_session
 | 角色 | Agent/model | 会话 |
 | --- | --- | --- |
 | `planner` | action plan 中实际记录的规划 Agent/model | 每个 Sheet/模块新会话 |
-| `retester` | 默认继承 planner | 每条复测用例新会话 |
+| `retester` | 默认继承 planner | 一个 blocked retest queue 共用一个长期会话 |
 | `reviewer` | 默认继承 planner | 独立只读会话 |
 
 角色级覆盖必须显式使用 `SIXGILL_RETEST_AGENT_NAME`/`SIXGILL_RETEST_MODEL` 或
 `SIXGILL_REVIEW_AGENT_NAME`/`SIXGILL_REVIEW_MODEL`。旧的 `SIXGILL_AGENT_*` 只在
 action plan 没有实际 planner 身份时作为全局回退，不能覆盖一个已绑定的 planner。
 
-## 逐步复测请求
+## Whole-case 复测请求
 
-使用 `_run_three_sheets.py --llm-retest --retest-queue <queue.json>` 时，宿主每轮收到
-一个 `request_type=llm_retest_turn` 请求。请求包含原始 Excel 行字段、相关画像提示、
-`generic_planning_knowledge`、首轮结果、当前截图路径、当前 UI 树路径和最近动作历史。
-旧 action plan 不属于当前动作 authority；截图和实时 UI 树优先于首轮结果。
+使用 `_run_three_sheets.py --llm-retest --retest-queue <queue.json>` 时，宿主在
+`create_session()` 的 `initial_context` 中一次性收到完整执行规范、App 配置、Profile、
+prerequisites、execution lessons、pitfalls、module_plan 和 agent_context。之后每个 Case
+只收到一个 `request_type=llm_retest_plan` 请求，包含原始 Excel 行字段、首轮结果和本次
+新采集的截图/UI 树。旧 action plan 不属于当前动作 authority；截图和实时 UI 树优先于
+首轮结果。
 
-宿主每次只能返回一个 `decision`：
+宿主必须一次返回现有 Runner Action Contract 的完整 Case Plan：
 
 ```json
 {
   "schema_version": "1.0",
-  "request_type": "llm_retest_turn",
+  "request_type": "llm_retest_plan",
   "case_id": "股指-row-010",
   "session_id": "session-...",
-  "turn": 1,
-  "decision": "act",
-  "intent": "recover",
-  "action": {"type": "tap_bbox", "x1": 900, "y1": 80, "x2": 980, "y2": 160},
-  "reason": "截图可见关闭按钮，当前 UI 树未提供稳定 resource-id，先按截图框点击",
-  "visible_facts": ["页面顶部可见关闭图标"],
-  "confidence": 0.86,
-  "evidence": []
+  "navigation": [{"type": "tap_text", "text": "行情"}],
+  "actions": [{"type": "tap_text", "text": "股指"}],
+  "target_page": {
+    "description": "股指页面",
+    "selected_text": ["股指"],
+    "all_ids": ["gz_index_container"],
+    "gate_mode": "composite"
+  },
+  "expected_observations": ["页面显示主要指数行情"]
 }
 ```
 
-控件未在 UI 树找到但截图可见时，优先使用 `tap_bbox`/`tap_xy` 定位，再等待新的
-截图/UI 树；下一轮应使用更新后的 UI 树重新绑定控件。`pass` 必须同时声明
-`target_page_match=true` 和 `expected_result_match=true`，并提供具体 `reason`。所有
-动作和会话响应都会写入 `llm_retest`、`steps`、`action_trace` 与复测证据目录。
+Runner 会先校验完整计划，再连续执行 navigation、target page gate 和全部 actions，最后
+采集 page observation 与 evidence。Retest Planner 不返回 pass/fail，也不负责最终测试结论；
+所有计划、动作和会话事实都会写入 `llm_retest`、`retest_plans`、`steps`、`action_trace`
+与复测证据目录，最终结果继续交给现有 LLM Review。
 
-如果宿主不可用、响应超时、协议不合法或达到复测上限，执行器安全地保留
+如果宿主不可用、计划协议不合法、目标页门禁失败或执行/证据采集失败，执行器安全地保留
 `⛔阻塞`，不会猜测动作，也不会回退到旧的 runtime recovery CLI。

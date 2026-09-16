@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 import xlrd
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import droid
@@ -37,7 +38,7 @@ from tools.agent_session import (
     create_agent_session,
     session_factory_available,
 )
-from tools.llm_retest import RetestLimits, run_retest_case
+from tools.llm_retest import run_retest_case_plan
 from tools.app_adapter import (
     AppAdapter,
     AppAdapterError,
@@ -1043,6 +1044,8 @@ _NON_EXECUTION_TRACE_TYPES = frozenset(
         "llm_request",
         "llm_protocol",
         "llm_decision",
+        "llm_plan",
+        "llm_plan_execution",
     }
 )
 
@@ -1397,9 +1400,118 @@ def capture_retest_observation(
         observation["current_activity"] = droid.current()
     except Exception as exc:
         errors.append(f"前台页面读取失败：{exc}")
+    rotation = current_rotation()
+    observation["orientation"] = (
+        "landscape" if rotation == 1 else "portrait" if rotation == 0 else "unknown"
+    )
     if errors:
         observation["observation_error"] = "；".join(errors)
     return observation
+
+
+def _load_retest_reference(path: Path | None, *, kind: str) -> dict[str, Any]:
+    """Load one queue-wide reference once for the retest session."""
+
+    if path is None:
+        return {"kind": kind, "path": "", "status": "not_configured"}
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.is_file():
+        return {"kind": kind, "path": str(resolved), "status": "missing"}
+    try:
+        if resolved.suffix.casefold() in {".yaml", ".yml"}:
+            content: Any = yaml.safe_load(resolved.read_text(encoding="utf-8")) or {}
+        else:
+            content = resolved.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        return {
+            "kind": kind,
+            "path": str(resolved),
+            "status": "unreadable",
+            "error": str(exc),
+        }
+    return {
+        "kind": kind,
+        "path": str(resolved),
+        "sha256": sha256_file(resolved),
+        "status": "loaded",
+        "content": content,
+    }
+
+
+def build_retest_session_context(
+    *,
+    source: Path,
+    plan: Mapping[str, Any],
+    app_config: AppConfig,
+    adapter_name: str,
+    selected_sheets: Iterable[str],
+) -> dict[str, Any]:
+    """Build the immutable context handed to one whole retest queue session.
+
+    The returned object is passed to ``create_agent_session`` exactly once.
+    Per-case requests carry only live observations and case-specific facts.
+    """
+
+    app_document = dict(app_config.document or {})
+    profile_path = app_config.profile_path
+    prerequisite_value = app_document.get("prerequisites")
+    prerequisite_path = (
+        (app_config.app_dir / str(prerequisite_value)).resolve()
+        if prerequisite_value
+        else (app_config.app_dir / "prerequisites.yaml").resolve()
+    )
+    app_file = app_config.app_file
+    reference_files = {
+        "app": _load_retest_reference(app_file, kind="app_config"),
+        "profile": _load_retest_reference(profile_path, kind="app_profile"),
+        "visual_anchors": _load_retest_reference(
+            app_config.app_dir / "visual_anchors.yaml", kind="visual_anchors"
+        ),
+        "prerequisites": _load_retest_reference(prerequisite_path, kind="prerequisites"),
+        "execution_lessons": _load_retest_reference(
+            PROJECT_ROOT / "自测经验总结.md", kind="execution_lessons"
+        ),
+        "execution_guide": _load_retest_reference(
+            PROJECT_ROOT / "docs" / "AGENT_EXECUTION_GUIDE.md", kind="execution_guide"
+        ),
+        "app_prerequisites_notes": _load_retest_reference(
+            app_config.app_dir / "前置条件.md", kind="app_prerequisites_notes"
+        ),
+        "app_pitfalls": _load_retest_reference(
+            app_config.app_dir / "待补充.md", kind="app_pitfalls"
+        ),
+    }
+    source_path = source.expanduser().resolve()
+    return {
+        "schema_version": "1.0",
+        "request_type": "llm_retest_session_init",
+        "role": "retester",
+        "scope": "blocked_retest_queue",
+        "queue_session_policy": "one_session_for_queue",
+        "source": {
+            "path": str(source_path),
+            "sha256": sha256_file(source_path),
+            "selected_sheets": list(selected_sheets),
+        },
+        "app": app_config.manifest_context(adapter_name=adapter_name),
+        "reference_files": reference_files,
+        "execution_policy": _EXECUTION_POLICY,
+        "module_plan": dict(plan),
+        "agent_context": {
+            "source": str(source_path),
+            "selected_sheets": list(selected_sheets),
+            "module_plan": dict(plan),
+            "generic_planning_knowledge": plan.get("generic_planning_knowledge") or {},
+            "app_profile_context": plan.get("app_profile_context") or {},
+            "app_profile_entries": plan.get("app_profile_entries") or [],
+            "app_profile_capabilities": plan.get("app_profile_capabilities") or [],
+        },
+        "planning_instruction": (
+            "完整参考资料仅在本 Session 初始化时加载一次。每条 Case 开始时必须重新读取"
+            "Runner 提供的 Screenshot/UI Tree，再根据 Case 和 Expected 生成一个完整 Runner Plan；"
+            "不要逐 Action 调用 LLM，也不要把旧 action plan 作为动作来源。"
+        ),
+    }
 
 
 def build_manifest(workbook: xlrd.book.Book, sheet_names: Iterable[str] | None = None) -> dict:
@@ -1647,7 +1759,7 @@ def _run_blocked_retest_once(
         "strategy": "deferred_second_pass",
         "status_buckets": ["blocked"],
         "max_retest_rounds": 1,
-        "mode": "llm_stepwise_fresh_session" if llm_retest else "validated_plan_replay",
+        "mode": "llm_whole_case_queue_session" if llm_retest else "validated_plan_replay",
         "planned": planned,
         "completed": 0,
         "queue": str(queue_path),
@@ -1758,8 +1870,8 @@ def main(argv: list[str] | None = None) -> int:
         action=argparse.BooleanOptionalAction,
         default=False,
         help=(
-            "阻塞复测时为每条用例创建新的 LLM retester 会话，重新读取原始 Excel、"
-            "App 画像和实时截图/UI树并逐步决定动作；不使用旧 action plan 作为动作来源；"
+            "阻塞复测时为整个 Queue 创建一个长期复用的 LLM retester 会话，重新读取原始 Excel、"
+            "App 画像和每条 Case 开始时的实时截图/UI树生成完整动作计划；不使用旧 action plan 作为动作来源；"
             "显式 --retest-queue 时可省略旧 action plan"
         ),
     )
@@ -1838,7 +1950,7 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("--probe-queue 必须与 --probe 一起使用")
     queue_path = args.probe_queue if args.probe else args.retest_queue
     queue_entries = _load_retest_queue(Path(queue_path).expanduser().resolve()) if queue_path else []
-    stepwise_retest = bool(args.llm_retest and queue_entries and not args.probe)
+    whole_case_retest = bool(args.llm_retest and queue_entries and not args.probe)
     llm_retest_requested = bool(
         args.llm_retest
         and not args.probe
@@ -1904,8 +2016,8 @@ def main(argv: list[str] | None = None) -> int:
 
     action_plan_document: dict | None = None
     action_case_plans: dict[tuple[str, int, str], dict] = {}
-    if args.action_plan and stepwise_retest:
-        # In stepwise mode an old plan is optional audit input.  Read only its
+    if args.action_plan and whole_case_retest:
+        # In whole-case retest mode an old plan is optional audit input.  Read only its
         # planner identity; do not validate or expose its actions as a source
         # of device operations.
         reference_path = Path(args.action_plan).expanduser().resolve()
@@ -1953,12 +2065,12 @@ def main(argv: list[str] | None = None) -> int:
         manifest["agent_plan_required"] = False
         manifest["llm_plan_required"] = False
 
-    if stepwise_retest:
+    if whole_case_retest:
         # The old plan may be copied for audit and used to inherit the planner
         # identity, but it is not an execution authority in this mode.
-        plan["planning_mode"] = "llm_stepwise_retest"
+        plan["planning_mode"] = "llm_whole_case_retest"
         plan["planner_backend"] = "desktop_agent_retester"
-        manifest["planning_mode"] = "llm_stepwise_retest"
+        manifest["planning_mode"] = "llm_whole_case_retest"
         manifest["agent_plan_required"] = False
         manifest["llm_plan_required"] = False
         manifest["retest_action_plan_authority"] = "reference_only"
@@ -1970,7 +2082,7 @@ def main(argv: list[str] | None = None) -> int:
     # review.  A direct LLM retest may omit the old plan; in that case inherit
     # the first-pass binding carried by the queue, if present.
     binding_source: Mapping[str, Any] | None = action_plan_document
-    if stepwise_retest and action_plan_document is None:
+    if whole_case_retest and action_plan_document is None:
         queue_binding = next(
             (
                 entry.get("agent_binding")
@@ -1988,7 +2100,7 @@ def main(argv: list[str] | None = None) -> int:
     manifest["agent_binding"] = agent_binding
     manifest["blocked_retest"] = {
         "enabled": bool(args.auto_retest_blocked and not queue_entries and not args.probe),
-        "strategy": "deferred_llm_stepwise" if args.llm_retest else "deferred_second_pass",
+        "strategy": "deferred_llm_whole_case" if args.llm_retest else "deferred_second_pass",
         "status_buckets": ["blocked"],
         "max_retest_rounds": 1,
         "queue_file": "blocked_retest_queue.json",
@@ -2035,7 +2147,7 @@ def main(argv: list[str] | None = None) -> int:
             manifest["navigation_probe_expected_count"] = len(retest_items)
         else:
             manifest["retest_expected_count"] = len(retest_items)
-    if args.action_plan and not stepwise_retest:
+    if args.action_plan and not whole_case_retest:
         _apply_agent_groups(manifest, execution_items, action_case_plans)
     existing_manifest_path = output / "execution_manifest.json"
     existing_run_id = ""
@@ -2078,6 +2190,30 @@ def main(argv: list[str] | None = None) -> int:
     session = ModuleSession()
     runtime_stats_path = output / "runtime_stats.json"
     write_runtime_stats(runtime_stats_path, session)
+    retest_agent_session = None
+    if whole_case_retest:
+        retest_binding = agent_binding.get("retester") or {}
+        retest_agent_session = create_agent_session(
+            retest_binding,
+            initial_context=build_retest_session_context(
+                source=source,
+                plan=plan,
+                app_config=app_config,
+                adapter_name=_active_adapter().name,
+                selected_sheets=selected_sheets,
+            )
+            | {
+                "queue_cases": [
+                    {
+                        "case_id": entry["case_id"],
+                        "sheet": entry["sheet"],
+                        "row": int(entry["row"]),
+                        "retest_order": int(entry["retest_order"]),
+                    }
+                    for entry in queue_entries
+                ],
+            },
+        )
 
     try:
         for module, page_group, case in execution_items:
@@ -2090,7 +2226,7 @@ def main(argv: list[str] | None = None) -> int:
                         if args.action_plan
                         else None
                     )
-                    if action_case_plan is not None and not stepwise_retest:
+                    if action_case_plan is not None and not whole_case_retest:
                         # The selected Agent owns the navigation grouping in
                         # structured-plan mode;
                         # the deterministic context grouping is only the
@@ -2120,7 +2256,7 @@ def main(argv: list[str] | None = None) -> int:
                     elements: list[dict] = []
                     llm_retest_result: dict[str, Any] | None = None
                     try:
-                        if stepwise_retest:
+                        if whole_case_retest:
                             # Retesting starts from a safe module state only;
                             # the live retester decides how to reach the case's
                             # target page from the fresh screenshot/UI tree.
@@ -2161,14 +2297,8 @@ def main(argv: list[str] | None = None) -> int:
                             action_ok = True
                             action_mode = "probe"
                         elif setup_ok:
-                            if stepwise_retest:
-                                retest_binding = agent_binding.get("retester") or {}
+                            if whole_case_retest:
                                 first_pass = queue_context_by_key.get((sheet_name, row), {})
-                                profile_context = {
-                                    "path": str(APP_PROFILE) if APP_PROFILE else "",
-                                    "sha256": manifest.get("app_profile_sha256", ""),
-                                    "hints": case.get("profile_hints") or [],
-                                }
 
                                 def _observe_retest(phase: str, turn: int) -> Mapping[str, Any]:
                                     return capture_retest_observation(
@@ -2179,44 +2309,137 @@ def main(argv: list[str] | None = None) -> int:
                                         turn,
                                     )
 
-                                def _execute_retest(action: Mapping[str, Any]) -> Mapping[str, Any]:
+                                def _execute_retest(case_plan: Mapping[str, Any]) -> Mapping[str, Any]:
                                     operation_events: list[dict] = []
-                                    ok, detail, mode = execute_agent_actions(
+                                    plan_navigation = [dict(item) for item in case_plan.get("navigation") or []]
+                                    plan_actions = [dict(item) for item in case_plan.get("actions") or []]
+                                    target_page = dict(case_plan.get("target_page") or {})
+                                    gate_strength = agent_target_gate_strength(target_page)
+                                    group_id = str(case_plan.get("page_group_id") or f"{sheet_name}-retest")
+                                    navigation_policy = str(
+                                        case_plan.get("navigation_policy")
+                                        or ("required" if plan_navigation else "if_needed")
+                                    ).casefold()
+                                    event(
                                         operation_events,
-                                        [dict(action)],
-                                        phase="LLM复测动作",
+                                        "navigation_contract",
+                                        group_id,
+                                        "attempt",
+                                        f"LLM whole-case plan；目标页门禁={gate_strength}；策略={navigation_policy}",
                                     )
+                                    current_match = False
+                                    if not plan_navigation or navigation_policy != "required":
+                                        current_match = wait_for_agent_target(
+                                            operation_events, target_page, phase="复测当前状态"
+                                        )
+                                    if current_match and not plan_navigation:
+                                        if gate_strength == "weak" and FAIL_CLOSED_ON_WEAK_TARGET_GATE:
+                                            return {
+                                                "ok": False,
+                                                "detail": "目标页条件过弱，拒绝把公共文字当作已到达目标页",
+                                                "events": operation_events,
+                                            }
+                                    elif current_match and navigation_policy == "if_needed" and gate_strength != "weak":
+                                        event(
+                                            operation_events,
+                                            "navigation_skip",
+                                            group_id,
+                                            "success",
+                                            "当前页面满足强门禁，跳过 whole-case plan 的可选导航",
+                                        )
+                                    else:
+                                        if not plan_navigation:
+                                            event(
+                                                operation_events,
+                                                "page_gate",
+                                                group_id,
+                                                "failed",
+                                                "当前页面不满足目标页且计划未提供 navigation",
+                                            )
+                                            return {
+                                                "ok": False,
+                                                "detail": "当前页面不满足目标页且完整计划未提供 navigation",
+                                                "events": operation_events,
+                                            }
+                                        nav_ok, nav_detail, _ = execute_agent_actions(
+                                            operation_events,
+                                            plan_navigation,
+                                            phase="LLM复测公共导航",
+                                        )
+                                        post_nav_ok = nav_ok and wait_for_agent_target(
+                                            operation_events, target_page, phase="LLM复测导航后"
+                                        )
+                                        if not post_nav_ok or (
+                                            post_nav_ok
+                                            and REQUIRE_STRONG_POST_NAVIGATION_GATE
+                                            and gate_strength == "weak"
+                                        ):
+                                            recovery = [
+                                                dict(item)
+                                                for item in case_plan.get("recovery_navigation") or plan_navigation
+                                            ]
+                                            event(
+                                                operation_events,
+                                                "replan",
+                                                group_id,
+                                                "attempt",
+                                                "whole-case plan 导航/目标页门禁失败，执行计划内一次 recovery_navigation",
+                                            )
+                                            recovery_ok, recovery_detail, _ = execute_agent_actions(
+                                                operation_events,
+                                                recovery,
+                                                phase="LLM复测恢复导航",
+                                            )
+                                            post_nav_ok = recovery_ok and wait_for_agent_target(
+                                                operation_events, target_page, phase="LLM复测恢复导航后"
+                                            )
+                                            if not post_nav_ok or (
+                                                post_nav_ok
+                                                and REQUIRE_STRONG_POST_NAVIGATION_GATE
+                                                and gate_strength == "weak"
+                                            ):
+                                                detail = recovery_detail or nav_detail or "完整计划导航后目标页门禁失败"
+                                                return {
+                                                    "ok": False,
+                                                    "detail": detail,
+                                                    "events": operation_events,
+                                                }
+                                    action_ok, detail, mode = execute_agent_actions(
+                                        operation_events,
+                                        plan_actions,
+                                        phase="LLM复测完整 Case 动作",
+                                    )
+                                    steps = [
+                                        {
+                                            "step_id": f"retest-plan-{index:03d}",
+                                            "phase": "navigation" if index <= len(plan_navigation) else "action",
+                                            "action": action,
+                                            "operation": {
+                                                "ok": action_ok,
+                                                "detail": detail or ("动作已完成" if action_ok else "动作未完成"),
+                                                "action_mode": mode,
+                                            },
+                                        }
+                                        for index, action in enumerate([*plan_navigation, *plan_actions], start=1)
+                                    ]
                                     return {
-                                        "ok": ok,
-                                        "detail": detail or ("底层动作已完成" if ok else "底层动作未完成"),
+                                        "ok": action_ok,
+                                        "detail": detail or ("完整 Case Plan 已执行" if action_ok else "完整 Case Plan 未完成"),
                                         "action_mode": mode,
                                         "events": operation_events,
+                                        "steps": steps,
+                                        "expected_observations": case_plan.get("expected_observations") or [],
                                     }
 
-                                agent_session = create_agent_session(
-                                    retest_binding,
-                                    initial_context={
-                                        "case_id": case["case_id"],
-                                        "sheet": sheet_name,
-                                        "row": row,
-                                        "app": app_config.manifest_context(
-                                            adapter_name=_active_adapter().name
-                                        ),
-                                    },
+                                if retest_agent_session is None:
+                                    raise RuntimeError("LLM 复测 Queue Session 未初始化")
+                                llm_retest_result = run_retest_case_plan(
+                                    case,
+                                    session=retest_agent_session,
+                                    observe=_observe_retest,
+                                    execute=_execute_retest,
+                                    first_pass=first_pass,
                                 )
-                                try:
-                                    llm_retest_result = run_retest_case(
-                                        case,
-                                        session=agent_session,
-                                        observe=_observe_retest,
-                                        execute=_execute_retest,
-                                        profile=profile_context,
-                                        generic_knowledge=plan.get("generic_planning_knowledge") or {},
-                                        first_pass=first_pass,
-                                        limits=RetestLimits(),
-                                    )
-                                finally:
-                                    agent_session.close()
                                 action_events.extend(llm_retest_result.get("action_trace") or [])
                                 action_ok = llm_retest_result.get("status") != "⛔阻塞"
                                 action_mode = "llm_retest"
@@ -2273,7 +2496,7 @@ def main(argv: list[str] | None = None) -> int:
                         str(case.get(key, "")) for key in ("case_name", "entry", "precondition", "action", "expected")
                     )
                     verification_only = any(k in verification_text for k in ("PC", "核对", "数据刷新", "实时", "开市", "时段"))
-                    if stepwise_retest and llm_retest_result is not None:
+                    if whole_case_retest and llm_retest_result is not None:
                         if not setup_ok:
                             status = "⛔阻塞"
                             blocked_reason = error_detail or "模块初始状态建立失败"
@@ -2282,7 +2505,7 @@ def main(argv: list[str] | None = None) -> int:
                             blocked_reason = "独立证据截图未生成或为空"
                         else:
                             status = str(llm_retest_result.get("status") or "⛔阻塞")
-                            blocked_reason = "" if status == "✅通过" else str(
+                            blocked_reason = "" if status in {"✅通过", "🟡待验证"} else str(
                                 llm_retest_result.get("reason") or "LLM 复测未给出具体判断理由"
                             )
                     elif not setup_ok or not action_ok:
@@ -2311,7 +2534,7 @@ def main(argv: list[str] | None = None) -> int:
                         status = "✅通过"
                         blocked_reason = ""
 
-                    if stepwise_retest and llm_retest_result is not None:
+                    if whole_case_retest and llm_retest_result is not None:
                         judgment_reason = str(
                             llm_retest_result.get("reason")
                             or blocked_reason
@@ -2332,7 +2555,7 @@ def main(argv: list[str] | None = None) -> int:
                             execution_was_performed=bool(_execution_trace(action_events)),
                         )
                     if (
-                        stepwise_retest
+                        whole_case_retest
                         and llm_retest_result is not None
                         and shot_ok
                         and str(llm_retest_result.get("status")) == status
@@ -2371,8 +2594,8 @@ def main(argv: list[str] | None = None) -> int:
                         "page_group_key": page_group_key,
                         "status": status,
                         "planning_mode": (
-                            "llm_stepwise_retest"
-                            if stepwise_retest
+                            "llm_whole_case_retest"
+                            if whole_case_retest
                             else "agent_structured_action_plan"
                             if args.action_plan
                             else "legacy_deterministic_explicit"
@@ -2396,7 +2619,7 @@ def main(argv: list[str] | None = None) -> int:
                         "action_trace": action_events,
                         "tested_at": now(),
                     }
-                    if action_case_plan is not None and not stepwise_retest:
+                    if action_case_plan is not None and not whole_case_retest:
                         navigation_source = action_case_plan.get("navigation_source") or "legacy_declared"
                         navigation_status = action_case_plan.get("navigation_status") or "unknown"
                         navigation_policy = action_case_plan.get("navigation_policy") or "required"
@@ -2423,6 +2646,7 @@ def main(argv: list[str] | None = None) -> int:
                         }
                     if llm_retest_result is not None:
                         record["steps"] = llm_retest_result.get("steps") or []
+                        record["retest_plans"] = llm_retest_result.get("plans") or []
                         record["llm_retest"] = llm_retest_result.get("llm_retest") or {}
                         record["retest_agent"] = llm_retest_result.get("llm_retest", {}).get("session") or {}
                     if args.probe:
@@ -2465,20 +2689,23 @@ def main(argv: list[str] | None = None) -> int:
         journal.mark_paused(reason="执行记录持久化失败")
         rotate([], False)
         raise
+    finally:
+        if retest_agent_session is not None:
+            retest_agent_session.close()
     setup_trace.append(
         {
             "type": "runtime_policy",
             "scope": "run",
             "policy": (
-                "llm_stepwise_retest_fresh_session"
-                if stepwise_retest
+                "llm_whole_case_retest_queue_session"
+                if whole_case_retest
                 else "agent_structured_actions_adapter_module_cold_start_page_group_reuse_row_execution"
                 if args.action_plan
                 else "legacy_deterministic_adapter_module_cold_start_page_group_reuse_row_execution"
             ),
             "adapter": _active_adapter().name,
-            "agent_plan_required": bool(args.action_plan and not stepwise_retest),
-            "llm_plan_required": bool(args.action_plan and not stepwise_retest),
+            "agent_plan_required": bool(args.action_plan and not whole_case_retest),
+            "llm_plan_required": bool(args.action_plan and not whole_case_retest),
             "stats": session_snapshot(session),
         }
     )

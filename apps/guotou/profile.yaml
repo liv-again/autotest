@@ -2,10 +2,10 @@ slug: guotou
 app_version: 10.5.4
 entries:
 - key: quote.guzhi_list
-  path: 行情→股指→国内指数→更多；列表字段：最新/涨幅/涨跌；搜索与详情可达
-  last_verified: '2026-09-08'
+  path: 行情→股指→国内指数→更多；列表标题和返回控件可见，字段：最新/涨幅/涨跌；右上角股票搜索→输入代码可展示结果并可取消返回；列表首条可进入指数详情，详情可返回列表
+  last_verified: '2026-09-17'
   app_version: V10.5.4
-  evidence_run: output/2026-09-08-guotou-six-sheets
+  evidence_run: output/2026-09-17-guotou-guzhi-full
   status: verified
 - key: quote.hsj_stock_list
   path: 行情→沪深京；指数宫格/涨跌分布/涨幅榜/更多
@@ -80,10 +80,10 @@ entries:
   evidence_run: output/2026-09-08-guotou-six-sheets
   status: unverified
 - key: quote.index_extended
-  path: 行情→股指；国内指数/股指期货/其他指数均可从模块更多进入列表；股指期货说明图标进入介绍页；列表支持搜索、详情和横竖屏
-  last_verified: '2026-09-08'
+  path: 行情→股指；顶部标题为股指；国内指数、股指期货、其他指数均可从模块更多进入独立列表；股指期货说明图标进入介绍页后可返回股指页；其他指数列表支持搜索与指数详情；本轮已验证股指页面身份、股指期货列表/说明页、其他指数列表/搜索/详情链路
+  last_verified: '2026-09-17'
   app_version: V10.5.4
-  evidence_run: output/2026-09-08-guotou-six-sheets
+  evidence_run: output/2026-09-17-guotou-guzhi-full
   status: verified
 - key: quote.hsj_rankings
   path: 行情→沪深京→涨幅榜左侧展开；可见涨幅榜/跌幅榜/快速涨幅/换手率/量比/成交额；各模块更多进入列表，支持搜索、排序、详情和横竖屏

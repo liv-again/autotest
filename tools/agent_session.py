@@ -7,8 +7,9 @@ small Python factory with this contract:
 ``factory(binding: dict, initial_context: dict) -> session``
 
 The returned session exposes ``request(payload: dict) -> dict`` and may expose
-``close()``.  The runner creates a new session for each retested case, while
-the binding (Agent name and model) is inherited from the planner by default.
+``close()``.  The runner creates one session for a retest queue and reuses it
+for each case; the binding (Agent name and model) is inherited from the
+planner by default.
 No CLI process, network client, or provider-specific SDK is started here.
 """
 
@@ -38,6 +39,7 @@ class AgentSessionSpec:
     prompt_version: str
     session_id: str
     source: str = "agent_binding"
+    session_policy: str = "fresh"
 
     def as_dict(self) -> dict[str, str]:
         return {
@@ -47,7 +49,7 @@ class AgentSessionSpec:
             "prompt_version": self.prompt_version,
             "session_id": self.session_id,
             "source": self.source,
-            "session_policy": "fresh",
+            "session_policy": self.session_policy,
         }
 
 
@@ -129,8 +131,9 @@ def create_agent_session(
     """Create one fresh session for a planner-inherited role.
 
     A session id is always generated here, even when the host later maps it to
-    a desktop thread.  This prevents a retest from silently inheriting the
-    planner or another case's conversation.
+    a desktop thread.  The session policy is recorded for audit; a queue-level
+    retest uses one handle for all cases and still never inherits the planner
+    or a reviewer conversation.
     """
 
     role = str(binding.get("role") or "retester").strip()
@@ -147,6 +150,7 @@ def create_agent_session(
         prompt_version=prompt_version,
         session_id=f"session-{uuid.uuid4().hex}",
         source=str(binding.get("source") or "agent_binding"),
+        session_policy=str(binding.get("session_policy") or "fresh"),
     )
     env = environment if environment is not None else os.environ
     factory = _REGISTERED_FACTORY
@@ -164,4 +168,3 @@ def create_agent_session(
     except Exception as exc:  # pragma: no cover - provider-owned failure
         raise AgentSessionError(f"Agent session factory 创建失败: {exc}") from exc
     return AgentSessionHandle(raw, spec)
-

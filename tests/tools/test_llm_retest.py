@@ -4,6 +4,7 @@ from tools.llm_retest import (
     LLMRetestError,
     RetestLimits,
     build_retest_request,
+    run_retest_case_plan,
     run_retest_case,
     validate_retest_turn,
 )
@@ -179,3 +180,60 @@ def test_run_retest_blocks_after_repeated_protocol_errors():
     assert result["status"] == "⛔阻塞"
     assert "无效协议" in result["reason"]
     assert len(session.requests) == 2
+
+
+def test_run_whole_case_plan_observes_and_calls_session_once():
+    plan = {
+        "schema_version": "1.0",
+        "case_id": "股指-row-010",
+        "sheet": "股指",
+        "row": 10,
+        "page_group_id": "股指-retest-010",
+        "page_group_key": "股指|retest|010",
+        "navigation": [{"type": "tap_text", "text": "行情"}],
+        "actions": [{"type": "tap_text", "text": "股指"}],
+        "target_page": {
+            "description": "股指页面",
+            "selected_text": ["股指"],
+            "all_ids": ["gz_index_container"],
+            "gate_mode": "composite",
+        },
+        "expected_observations": ["页面显示主要指数行情"],
+    }
+    session = FakeSession([plan])
+    observed = []
+    executed = []
+
+    def observe(phase, turn):
+        observed.append((phase, turn))
+        return _observation(phase, turn)
+
+    def execute(case_plan):
+        executed.append(case_plan)
+        return {
+            "ok": True,
+            "detail": "完整计划已执行",
+            "steps": [
+                {
+                    "step_id": "retest-plan-001",
+                    "phase": "navigation",
+                    "action": case_plan["navigation"][0],
+                    "operation": {"ok": True},
+                }
+            ],
+        }
+
+    result = run_retest_case_plan(
+        _case(),
+        session=session,
+        observe=observe,
+        execute=execute,
+        first_pass={"initial_status": "⛔阻塞"},
+    )
+
+    assert result["status"] == "🟡待验证"
+    assert observed == [("initial", 0), ("after_plan", 1)]
+    assert len(session.requests) == 1
+    assert len(executed) == 1
+    assert executed[0]["actions"] == plan["actions"]
+    assert result["llm_retest"]["mode"] == "whole_case_plan_queue_session"

@@ -46,7 +46,7 @@ Agent 计划产生的成功动作不会直接变成通过。执行器先记录�
 `llm_reviews.json.agent` 中记录实际值。规划、复测和复核的 prompt_version 可以不同，
 因为三者承担的任务不同。
 
-复测记录中的 `llm_retest.session` 只描述逐步复测事实。复核 Agent 不得沿用该
+复测记录中的 `llm_retest.session` 只描述 Queue 级 whole-case 复测事实。复核 Agent 不得沿用该
 session_id、继续控制设备或把复测的 `pass` 直接当作最终结论；它必须重新读取当前
 队列中的截图、UI 树、动作轨迹和 Excel `expected`，独立给出判断理由。
 

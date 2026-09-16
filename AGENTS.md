@@ -15,7 +15,7 @@
 - 执行器按 `source_order`/Excel 实际行号升序逐条执行，每行是一个独立执行单元；不得因为多个用例落在同一页面而合并业务动作。
 - 每行必须独立完成：目标组上下文确认 → 目标页校验 → 本行动作 → 本行断言/观察 → 独立证据 → 立即落盘。
 - 同组行可以复用已验证的导航和页面，但每行仍必须重新校验目标页；页面被上一行改变时，先恢复组锚点。不同层级目录、入口、市场、方向或前置数据不得跨组复用。
-- 首轮目标页校验失败时，确定性执行器最多执行一次 action plan 中已声明的 `recovery_navigation`，并重新通过原目标页门禁；计划仍失败就阻塞本行。对阻塞队列显式启用 `--llm-retest` 时，改由独立的 retester 会话重新读取原始 Excel、画像、实时截图/UI 树，逐步决定动作，旧 action plan 只作审计参考。
+- 首轮目标页校验失败时，确定性执行器最多执行一次 action plan 中已声明的 `recovery_navigation`，并重新通过原目标页门禁；计划仍失败就阻塞本行。对阻塞队列显式启用 `--llm-retest` 时，改由一个长期复用的 Queue 级 retester 会话在每条 Case 开始时读取实时截图/UI 树，一次生成完整动作计划，旧 action plan 只作审计参考。
 - 模块完成后，LLM 只接收失败、阻塞、待验证和低置信度记录做集中分析；通过用例不重复发送完整 UI 树和截图。
 
 ## 状态与动作硬约束
@@ -41,6 +41,6 @@
 
 ## 当前临时脚本的使用限制
 
-`tools/_run_three_sheets.py` 仅用于本次问题复盘和兼容旧任务。首轮正式执行必须先由当前选定的 Agent 读取 `tools/agent_plan.py context` 产出的上下文，生成并校验 `agent_action_plan.json`，再以 `--action-plan` 启动；执行器只调用计划中的低层动作。阻塞复测若使用 `--llm-retest`，则由 `tools/agent_session.py` 创建独立的 provider-neutral 桌面会话，原始用例和实时证据由 retester 逐步消费，不能回退到 CLI/Codex 专用传输。`--legacy-deterministic` 仅用于迁移诊断。不得重新引入“只解析用例名称+操作描述、未识别动作 observe 通过、末尾一次性写结果”等旧行为。
+`tools/_run_three_sheets.py` 仅用于本次问题复盘和兼容旧任务。首轮正式执行必须先由当前选定的 Agent 读取 `tools/agent_plan.py context` 产出的上下文，生成并校验 `agent_action_plan.json`，再以 `--action-plan` 启动；执行器只调用计划中的低层动作。阻塞复测若使用 `--llm-retest`，则由 `tools/agent_session.py` 为整个 Queue 创建一个 provider-neutral 桌面会话，完整参考资料只在初始化时加载一次，每条 Case 由 retester 基于实时证据一次生成完整 Plan，不能回退到 CLI/Codex 专用传输。`--legacy-deterministic` 仅用于迁移诊断。不得重新引入“只解析用例名称+操作描述、未识别动作 observe 通过、末尾一次性写结果”等旧行为。
 
 执行器通过 `--app` 选择 `apps/<slug>/app.yaml`；没有 `adapter.py` 的 App 必须走 `tools.app_adapter.GenericAdapter`，不得在通用执行器中新增券商专用包名、坐标或页面判断。

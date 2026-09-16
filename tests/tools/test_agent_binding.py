@@ -20,7 +20,7 @@ def test_planner_and_reviewer_inherit_planner_by_default():
     assert binding["planner"]["model"] == "model-a"
     assert binding["retester"]["agent"] == "Trae"
     assert binding["retester"]["model"] == "model-a"
-    assert binding["retester"]["session_policy"] == "new_per_case"
+    assert binding["retester"]["session_policy"] == "new_per_queue"
     assert binding["reviewer"]["agent"] == "Trae"
     assert binding["reviewer"]["model"] == "model-a"
     assert binding["reviewer"]["prompt_version"] == "row-review-v1"

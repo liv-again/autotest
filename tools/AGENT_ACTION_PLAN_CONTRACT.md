@@ -107,7 +107,7 @@
 运行目录生成 `blocked_retest_queue.json`，只选择首轮状态为 `blocked` 的行，
 并在 `blocked-retest/` 子目录逐条重新执行一次。兼容模式继续使用首轮已经校验的
 Agent action plan；若显式传入 `--llm-retest`，则每条由独立的 retester 会话重新读取
-原始 Excel 用例、App 画像和实时截图/UI 树，逐步返回并执行一个低层动作，旧计划只作
+原始 Excel 用例、App 画像和每条 Case 开始时的实时截图/UI 树，一次返回并执行完整 Case Plan，旧计划只作
 历史审计参考。两种模式都会重新执行公共 setup、产生新的截图/UI 观察和动作轨迹。
 第二轮结束后写入 `execution_records.retested.json`，其中 `attempts` 保留首轮与复测
 两份记录，最终可见状态以第二轮为准。
@@ -135,7 +135,7 @@ Agent action plan；若显式传入 `--llm-retest`，则每条由独立的 retes
 | 角色 | 默认 Agent/model 来源 | 会话边界 |
 | --- | --- | --- |
 | `planner` | action plan 的 `planner` | 每个 Sheet/模块新会话 |
-| `retester` | 继承 planner；可用 `SIXGILL_RETEST_AGENT_NAME`/`SIXGILL_RETEST_MODEL` 显式覆盖 | 每条复测用例新会话 |
+| `retester` | 继承 planner；可用 `SIXGILL_RETEST_AGENT_NAME`/`SIXGILL_RETEST_MODEL` 显式覆盖 | 一个复测 Queue 共用一个长期会话 |
 | `reviewer` | 继承 planner；可用 `SIXGILL_REVIEW_AGENT_NAME`/`SIXGILL_REVIEW_MODEL` 显式覆盖 | 独立只读会话 |
 
 桌面宿主通过 `SIXGILL_AGENT_SESSION_FACTORY=module:function` 或进程内注册

@@ -7,8 +7,8 @@ operate the device and it never invents an ``actual`` value.
 
 The queue carries the first-pass ``agent_binding`` when available.  A caller
 may pass it to ``_run_three_sheets.py --llm-retest`` without passing the old
-action plan; the retest host then creates one fresh session per case and lets
-the Agent re-understand the original row from live evidence.
+action plan; the retest host then creates one long-lived session for the queue
+and lets the Agent re-understand one original row at a time from live evidence.
 
 Typical workflow::
 

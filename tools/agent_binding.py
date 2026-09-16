@@ -113,7 +113,7 @@ def resolve_agent_binding(
             retest_model,
             DEFAULT_RETEST_PROMPT_VERSION,
             source=retest_source,
-            session_policy="new_per_case",
+            session_policy="new_per_queue",
         ),
         "reviewer": _role(
             review_agent,

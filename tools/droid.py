@@ -11,6 +11,7 @@
   python droid.py tap  --bbox 500 700 620 820  # 点击视觉模型返回的框中心
   python droid.py dump-xml [out.xml]       # 保存当前 UIAutomator 树
   python droid.py type "512000"            # 输入文本（需先聚焦输入框）
+  python droid.py type "银行" ADBKeyboard.apk # 中文输入（自动安装/切换 ADB Keyboard）
   python droid.py key BACK|HOME|ENTER|DEL  # 按键
   python droid.py swipe 630 2000 630 800 300   # 滑动(默认300ms)
    python droid.py shot [out.png]           # 尽力截图(FLAG_SECURE会得到0字节)
@@ -21,6 +22,8 @@
 import subprocess, sys, os, re, xml.etree.ElementTree as ET, json, tempfile
 
 DEV_XML = "/sdcard/_droid_dump.xml"
+ADB_KEYBOARD_PACKAGE = "com.android.adbkeyboard"
+ADB_KEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
 
 def adb(*args, binary=False, timeout=60):
     cmd = ["adb", *args]
@@ -186,6 +189,87 @@ def has(kws):
         ok = ok and found
     return 0 if ok else 1
 
+def _adb_serial_args(serial):
+    return ("-s", str(serial)) if serial else ()
+
+
+def _adb_keyboard_config():
+    package = os.environ.get("SIXGILL_ADB_KEYBOARD_PACKAGE", ADB_KEYBOARD_PACKAGE).strip()
+    ime = os.environ.get("SIXGILL_ADB_KEYBOARD_IME", ADB_KEYBOARD_IME).strip()
+    return package, ime
+
+
+def _ensure_adb_keyboard(serial=None, apk_path=None):
+    """Ensure the ADB Keyboard IME is installed, enabled, and selected."""
+
+    prefix = _adb_serial_args(serial)
+    package, ime = _adb_keyboard_config()
+    rc, out, err = adb(*prefix, "shell", "pm", "path", package)
+    if rc != 0 or not out.strip():
+        apk_path = apk_path or os.environ.get("SIXGILL_ADB_KEYBOARD_APK", "")
+        apk_path = os.path.abspath(os.path.expanduser(str(apk_path))) if apk_path else ""
+        if not apk_path or not os.path.isfile(apk_path):
+            return 1, (
+                f"中文输入需要 ADB Keyboard（{package}），但设备未安装；"
+                "请通过 --adb-keyboard-apk 或 SIXGILL_ADB_KEYBOARD_APK 提供 APK。"
+            )
+        install_rc, install_out, install_err = adb(
+            *prefix, "install", "-r", apk_path
+        )
+        if install_rc != 0:
+            return install_rc, (
+                f"ADB Keyboard 安装失败: {(install_err or install_out).strip()}"
+            )
+        rc, out, err = adb(*prefix, "shell", "pm", "path", package)
+        if rc != 0 or not out.strip():
+            return 1, f"ADB Keyboard 安装后仍未发现包 {package}: {err.strip()}"
+
+    enable_rc, _, enable_err = adb(*prefix, "shell", "ime", "enable", ime)
+    if enable_rc != 0:
+        return enable_rc, f"ADB Keyboard 启用失败: {enable_err.strip()}"
+    set_rc, _, set_err = adb(*prefix, "shell", "ime", "set", ime)
+    if set_rc != 0:
+        return set_rc, f"ADB Keyboard 切换失败: {set_err.strip()}"
+    return 0, f"ADB Keyboard 已启用并切换为 {ime}"
+
+
+def type_text(text, *, serial=None, adb_keyboard_apk=None):
+    """Input text, using ADB Keyboard for non-ASCII text."""
+
+    text = str(text)
+    if not text:
+        return 2, "", "type_text 不能输入空文本"
+    prefix = _adb_serial_args(serial)
+    if any(ord(char) > 127 for char in text):
+        setup_rc, setup_detail = _ensure_adb_keyboard(
+            serial=serial,
+            apk_path=adb_keyboard_apk,
+        )
+        if setup_rc != 0:
+            return setup_rc, "", setup_detail
+        rc, out, err = adb(
+            *prefix,
+            "shell",
+            "am",
+            "broadcast",
+            "-a",
+            "ADB_INPUT_TEXT",
+            "--es",
+            "msg",
+            text,
+        )
+        detail = f"method=adb-keyboard; {setup_detail}"
+        if err.strip():
+            detail += f"; {err.strip()}"
+        return rc, out, detail
+
+    rc, out, err = adb(*prefix, "shell", "input", "text", text)
+    detail = "method=adb-input-text"
+    if err.strip():
+        detail += f"; {err.strip()}"
+    return rc, out, detail
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__); return
@@ -223,7 +307,15 @@ def main():
                 print("tap: --bbox 需要 x1 y1 x2 y2"); sys.exit(2)
             sys.exit(tap_bbox(*vals))
     elif cmd == "type":
-        txt = sys.argv[2]; adb("shell","input","text",txt); print(f"typed: {txt}")
+        txt = sys.argv[2]
+        apk = sys.argv[3] if len(sys.argv) > 3 else None
+        rc, _, detail = type_text(
+            txt,
+            serial=os.environ.get("ANDROID_SERIAL"),
+            adb_keyboard_apk=apk,
+        )
+        print(f"typed: {txt} ({detail})")
+        sys.exit(rc)
     elif cmd == "key":
         k = sys.argv[2].upper(); adb("shell","input","keyevent","KEYCODE_"+k); print(f"key {k}")
     elif cmd == "swipe":

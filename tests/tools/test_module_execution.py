@@ -543,6 +543,31 @@ def test_row_scoped_gate_separates_observe_from_execution_mode_and_order():
     assert not any("execution_mode" in error for error in errors)
 
 
+def test_llm_review_is_required_for_pending_rows_in_formal_agent_runs():
+    manifest = {
+        "mode": "full",
+        "execution_scope": "single_excel_row",
+        "llm_review_required": True,
+        "expected_count": 1,
+        "selected_cases": [{"sheet": "模块A", "row": 2, "case_id": "模块A-row-002"}],
+    }
+    record = {
+        "sheet": "模块A",
+        "row": 2,
+        "case_id": "模块A-row-002",
+        "source_order": 1,
+        "execution_order": 1,
+        "status": "🟡待验证",
+        "actual": "AI执行步骤：\n1. 执行测试动作\n操作结果：\n页面已观察\n判断理由：等待逐行复核",
+        "evidence": ["shots/a.png"],
+        "action_trace": [{"type": "tap", "result": "success"}],
+    }
+
+    errors = validate_execution_contract([record], manifest)
+
+    assert any("要求逐行 LLM 复核，缺少 llm_review" in error for error in errors)
+
+
 def test_agent_setup_does_not_skip_declared_navigation_on_current_match(monkeypatch):
     calls = []
 

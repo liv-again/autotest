@@ -44,3 +44,11 @@
 `tools/_run_three_sheets.py` 仅用于本次问题复盘和兼容旧任务。首轮正式执行必须先由当前选定的 Agent 读取 `tools/agent_plan.py context` 产出的上下文，生成并校验 `agent_action_plan.json`，再以 `--action-plan` 启动；执行器只调用计划中的低层动作。阻塞复测若使用 `--llm-retest`，则由 `tools/agent_session.py` 为整个 Queue 创建一个 provider-neutral 桌面会话，完整参考资料只在初始化时加载一次，每条 Case 由 retester 基于实时证据一次生成完整 Plan，不能回退到 CLI/Codex 专用传输。`--legacy-deterministic` 仅用于迁移诊断。不得重新引入“只解析用例名称+操作描述、未识别动作 observe 通过、末尾一次性写结果”等旧行为。
 
 执行器通过 `--app` 选择 `apps/<slug>/app.yaml`；没有 `adapter.py` 的 App 必须走 `tools.app_adapter.GenericAdapter`，不得在通用执行器中新增券商专用包名、坐标或页面判断。
+
+## 当前 Codex Agent 内联复测
+
+阻塞复测也可以由当前 Codex Agent 直接编排：使用 `--current-agent
+--no-auto-retest-blocked`，Runner 通过 `current-agent-bridge` 逐 Case 接收当前
+Agent 生成的完整 Plan，再由 Runner 执行和取证。该模式不创建子 Agent，不调用
+`SIXGILL_AGENT_SESSION_FACTORY`，也不能宣称产生独立 LLM Review 或新的 provider
+Session。

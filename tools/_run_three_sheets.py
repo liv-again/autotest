@@ -38,6 +38,7 @@ from tools.agent_session import (
     create_agent_session,
     session_factory_available,
 )
+from tools.current_agent_session import CurrentAgentSession
 from tools.llm_retest import run_retest_case_plan
 from tools.app_adapter import (
     AppAdapter,
@@ -94,6 +95,7 @@ SOURCE: Path | None = None
 APP_PROFILE: Path | None = None
 OUTPUT: Path | None = None
 SHOTS: Path | None = None
+ADB_KEYBOARD_APK: Path | None = None
 MAX_SOFT_BACK = 3
 PAGE_READY_RETRIES = 5
 _EXECUTION_POLICY = load_execution_policy()
@@ -344,7 +346,11 @@ def swipe_duration(
 def type_text(events: list[dict], text: str) -> bool:
     """Type text from a validated Agent plan and record the real action."""
 
-    rc, _, err = droid.adb("shell", "input", "text", text)
+    rc, _, err = droid.type_text(
+        text,
+        serial=DEVICE,
+        adb_keyboard_apk=str(ADB_KEYBOARD_APK) if ADB_KEYBOARD_APK else None,
+    )
     ok = rc == 0
     # Do not put the value in the event target: account/code data should not
     # be copied into the readable report or logs.  The plan remains the
@@ -1750,6 +1756,9 @@ def _run_blocked_retest_once(
         execution_document,
         scope="all",
         status_buckets=("blocked",),
+        # This is an explicitly bounded executor-owned blocked retry.  It is
+        # not the public first-pass -> LLM-review -> retest queue workflow.
+        require_review=False,
     )
     queue_path = write_retest_json(queue_document, output / "blocked_retest_queue.json")
     retest_output = output / "blocked-retest"
@@ -1849,6 +1858,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source", help=".xls/.xlsx 用例文件；未指定时使用 App 配置的 default_source")
     parser.add_argument("--profile", help="覆盖 App 配置中的 profile.yaml")
     parser.add_argument("--device", help="ADB 设备序列号；默认使用配置或当前默认设备")
+    parser.add_argument(
+        "--adb-keyboard-apk",
+        help=(
+            "中文输入时使用的 ADBKeyboard.apk；设备未安装 com.android.adbkeyboard 时，"
+            "首次中文输入会自动安装。也可使用 SIXGILL_ADB_KEYBOARD_APK。"
+        ),
+    )
     parser.add_argument("--output", help="本轮运行目录；未指定时使用 App 配置或 output/<app>-run")
     parser.add_argument("--sheet", action="append", dest="sheets", help="指定 Sheet，可重复；默认执行预设 Sheet")
     parser.add_argument("--resume", action="store_true", help="从 execution_records.jsonl 继续未完成用例")
@@ -1859,10 +1875,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--auto-retest-blocked",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help=(
-            "首轮完成后在当前 output/blocked-retest 下自动复测阻塞用例一次；"
-            "默认开启，最多复测一轮"
+            "兼容旧流程的首轮自动阻塞复测开关；当前 Agent 复核流程中已禁用，"
+            "必须先完成首轮 LLM 复核，再通过 retest_results.py 显式生成复测队列"
         ),
     )
     parser.add_argument(
@@ -1874,6 +1890,27 @@ def main(argv: list[str] | None = None) -> int:
             "App 画像和每条 Case 开始时的实时截图/UI树生成完整动作计划；不使用旧 action plan 作为动作来源；"
             "显式 --retest-queue 时可省略旧 action plan"
         ),
+    )
+    parser.add_argument(
+        "--current-agent",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "复用当前 Codex Agent 逐 Case 生成一次完整 Plan；Runner 通过文件桥接等待 "
+            "Plan 后执行。不会创建子 Agent，也不需要 Agent session factory；必须配合 --retest-queue。"
+        ),
+    )
+    parser.add_argument(
+        "--current-agent-bridge-dir",
+        help=(
+            "当前 Agent Plan 文件桥接目录；默认使用 <output>/current-agent-bridge。"
+        ),
+    )
+    parser.add_argument(
+        "--current-agent-timeout",
+        type=float,
+        default=1800.0,
+        help="Runner 等待当前 Agent 返回单条 Case Plan 的秒数，默认 1800。",
     )
     parser.add_argument(
         "--probe",
@@ -1899,15 +1936,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if args.current_agent and args.llm_retest:
+        raise ValueError("--current-agent 不能与 --llm-retest 同时使用")
+    if args.current_agent and not args.retest_queue:
+        raise ValueError("--current-agent 必须配合 --retest-queue 使用")
+    if args.current_agent and args.auto_retest_blocked:
+        raise ValueError(
+            "--current-agent 由当前 Agent 外部逐 Case 编排，不能再自动启动子复测；"
+            "请显式使用 --no-auto-retest-blocked"
+        )
     if (
         not args.action_plan
         and not args.legacy_deterministic
-        and not (args.llm_retest and args.retest_queue and not args.probe)
+        and not (
+            (args.llm_retest or args.current_agent)
+            and args.retest_queue
+            and not args.probe
+        )
     ):
         raise ValueError(
             "必须提供 --action-plan。固定动作解析已不再是默认路径；"
             "如确需兼容旧行为，请显式使用 --legacy-deterministic；"
-            "LLM 复测模式可对显式 --retest-queue 省略旧 action plan"
+            "LLM/当前 Agent 复测模式可对显式 --retest-queue 省略旧 action plan"
         )
 
     app_slug = args.app or infer_app_slug_from_profile(args.profile) or DEFAULT_APP_SLUG
@@ -1924,11 +1974,24 @@ def main(argv: list[str] | None = None) -> int:
         output = app_config.default_output
     else:
         output = (PROJECT_ROOT / "output" / f"{app_config.slug}-run").resolve()
+    current_agent_bridge_dir = (
+        Path(args.current_agent_bridge_dir).expanduser().resolve()
+        if args.current_agent_bridge_dir
+        else output / "current-agent-bridge"
+    )
+    if args.current_agent and args.current_agent_timeout <= 0:
+        raise ValueError("--current-agent-timeout 必须大于 0")
 
-    global DEVICE, SOURCE, APP_PROFILE, OUTPUT, _ACTIVE_ADAPTER, _ACTIVE_APP_CONFIG
+    global DEVICE, SOURCE, APP_PROFILE, OUTPUT, ADB_KEYBOARD_APK, _ACTIVE_ADAPTER, _ACTIVE_APP_CONFIG
     DEVICE = str(args.device or app_config.document.get("device") or DEFAULT_DEVICE).strip()
     if not DEVICE:
         DEVICE = DEFAULT_DEVICE
+    keyboard_apk = args.adb_keyboard_apk or os.environ.get("SIXGILL_ADB_KEYBOARD_APK")
+    ADB_KEYBOARD_APK = (
+        Path(keyboard_apk).expanduser().resolve()
+        if keyboard_apk
+        else None
+    )
     SOURCE = source
     APP_PROFILE = app_config.profile_path
     OUTPUT = output
@@ -1950,7 +2013,14 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("--probe-queue 必须与 --probe 一起使用")
     queue_path = args.probe_queue if args.probe else args.retest_queue
     queue_entries = _load_retest_queue(Path(queue_path).expanduser().resolve()) if queue_path else []
-    whole_case_retest = bool(args.llm_retest and queue_entries and not args.probe)
+    if args.auto_retest_blocked and not queue_entries and not args.probe:
+        raise ValueError(
+            "首轮自动阻塞复测已停用：必须先完成首轮 LLM 逐行复核，"
+            "再使用 retest_results.py 生成复测队列"
+        )
+    whole_case_retest = bool(
+        (args.llm_retest or args.current_agent) and queue_entries and not args.probe
+    )
     llm_retest_requested = bool(
         args.llm_retest
         and not args.probe
@@ -2068,13 +2138,24 @@ def main(argv: list[str] | None = None) -> int:
     if whole_case_retest:
         # The old plan may be copied for audit and used to inherit the planner
         # identity, but it is not an execution authority in this mode.
-        plan["planning_mode"] = "llm_whole_case_retest"
-        plan["planner_backend"] = "desktop_agent_retester"
-        manifest["planning_mode"] = "llm_whole_case_retest"
+        plan["planning_mode"] = (
+            "current_agent_inline_case_retest"
+            if args.current_agent
+            else "llm_whole_case_retest"
+        )
+        plan["planner_backend"] = (
+            "current_codex_agent_inline"
+            if args.current_agent
+            else "desktop_agent_retester"
+        )
+        manifest["planning_mode"] = plan["planning_mode"]
         manifest["agent_plan_required"] = False
         manifest["llm_plan_required"] = False
         manifest["retest_action_plan_authority"] = "reference_only"
         manifest["retest_agent_role"] = "retester"
+        if args.current_agent:
+            manifest["current_agent_bridge_dir"] = str(current_agent_bridge_dir)
+            manifest["current_agent_plan_mode"] = "one_case_one_plan"
         manifest["app_profile_file"] = str(APP_PROFILE) if APP_PROFILE else ""
         manifest["app_profile_sha256"] = sha256_file(APP_PROFILE) if APP_PROFILE else ""
 
@@ -2100,11 +2181,19 @@ def main(argv: list[str] | None = None) -> int:
     manifest["agent_binding"] = agent_binding
     manifest["blocked_retest"] = {
         "enabled": bool(args.auto_retest_blocked and not queue_entries and not args.probe),
-        "strategy": "deferred_llm_whole_case" if args.llm_retest else "deferred_second_pass",
+        "strategy": (
+            "current_agent_inline_case_plan"
+            if args.current_agent
+            else "deferred_llm_whole_case"
+            if args.llm_retest
+            else "disabled_until_first_pass_review"
+            if not args.auto_retest_blocked and not queue_entries and not args.probe
+            else "deferred_second_pass"
+        ),
         "status_buckets": ["blocked"],
         "max_retest_rounds": 1,
-        "queue_file": "blocked_retest_queue.json",
-        "output_directory": "blocked-retest",
+        "queue_file": "retest_queue.json",
+        "output_directory": "retest",
     }
     queue_context_by_key = {
         (str(entry["sheet"]), int(entry["row"])): entry for entry in queue_entries
@@ -2193,27 +2282,35 @@ def main(argv: list[str] | None = None) -> int:
     retest_agent_session = None
     if whole_case_retest:
         retest_binding = agent_binding.get("retester") or {}
-        retest_agent_session = create_agent_session(
-            retest_binding,
-            initial_context=build_retest_session_context(
-                source=source,
-                plan=plan,
-                app_config=app_config,
-                adapter_name=_active_adapter().name,
-                selected_sheets=selected_sheets,
+        retest_context = build_retest_session_context(
+            source=source,
+            plan=plan,
+            app_config=app_config,
+            adapter_name=_active_adapter().name,
+            selected_sheets=selected_sheets,
+        ) | {
+            "queue_cases": [
+                {
+                    "case_id": entry["case_id"],
+                    "sheet": entry["sheet"],
+                    "row": int(entry["row"]),
+                    "retest_order": int(entry["retest_order"]),
+                }
+                for entry in queue_entries
+            ],
+        }
+        if args.current_agent:
+            retest_agent_session = CurrentAgentSession(
+                retest_binding,
+                initial_context=retest_context,
+                bridge_dir=current_agent_bridge_dir,
+                timeout_seconds=args.current_agent_timeout,
             )
-            | {
-                "queue_cases": [
-                    {
-                        "case_id": entry["case_id"],
-                        "sheet": entry["sheet"],
-                        "row": int(entry["row"]),
-                        "retest_order": int(entry["retest_order"]),
-                    }
-                    for entry in queue_entries
-                ],
-            },
-        )
+        else:
+            retest_agent_session = create_agent_session(
+                retest_binding,
+                initial_context=retest_context,
+            )
 
     try:
         for module, page_group, case in execution_items:
@@ -2442,7 +2539,11 @@ def main(argv: list[str] | None = None) -> int:
                                 )
                                 action_events.extend(llm_retest_result.get("action_trace") or [])
                                 action_ok = llm_retest_result.get("status") != "⛔阻塞"
-                                action_mode = "llm_retest"
+                                action_mode = (
+                                    "current_agent_inline_retest"
+                                    if args.current_agent
+                                    else "llm_retest"
+                                )
                                 if llm_retest_result.get("status") == "⛔阻塞":
                                     error_detail = str(
                                         llm_retest_result.get("reason") or "LLM 复测未形成安全终态"
@@ -2697,7 +2798,9 @@ def main(argv: list[str] | None = None) -> int:
             "type": "runtime_policy",
             "scope": "run",
             "policy": (
-                "llm_whole_case_retest_queue_session"
+                "current_agent_inline_case_plan_runner"
+                if args.current_agent
+                else "llm_whole_case_retest_queue_session"
                 if whole_case_retest
                 else "agent_structured_actions_adapter_module_cold_start_page_group_reuse_row_execution"
                 if args.action_plan

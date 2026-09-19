@@ -363,6 +363,13 @@ Agent 读取 context 后，必须生成结构化 JSON 文件。不能把 Excel �
 | `assert_text` | `text` | 执行断言 |
 | `assert_id` | `id` | 执行断言 |
 
+`type_text` 输入非 ASCII 文本（包括中文）时，执行器不会调用容易在部分设备上
+触发 `InputText.sendText` 异常的 `adb shell input text`，而是按以下顺序使用
+ADB Keyboard：检查/安装 `com.android.adbkeyboard`、启用并切换到
+`com.android.adbkeyboard/.AdbIME`，然后发送 `ADB_INPUT_TEXT` 广播。运行器可通过
+`--adb-keyboard-apk <路径>` 或环境变量 `SIXGILL_ADB_KEYBOARD_APK` 提供 APK；
+设备未安装且未提供 APK 时，该输入动作会明确失败并记录原因。
+
 目标页 Gate 支持 `exact`、`composite`、`weak`：
 
 - `exact` 必须包含稳定身份条件，如 `all_ids`、`selected_text` 或 `selected_ids`。
@@ -536,9 +543,9 @@ python tools/_run_three_sheets.py `
 | `execution_records.json` | journal 完成后的规范化执行文档 |
 | `runtime_stats.json` | 模块冷启动、软重置、组复用等运行统计 |
 | `shots/` | 当前运行的截图证据 |
-| `blocked_retest_queue.json` | 首轮阻塞用例的一轮复测队列 |
-| `blocked_retest_summary.json` | 阻塞复测摘要 |
-| `blocked-retest/` | 阻塞用例复测子运行目录 |
+| `retest_queue.json` | 首轮 LLM 复核后筛选出的复测队列 |
+| `retest_summary.json` | 复测摘要 |
+| `retest/` | 复测用例子运行目录 |
 | `execution_records.retested.json` | 首轮和阻塞复测合并后的执行记录 |
 | `retest_execution.json` | 显式复测运行的约定结果文件名 |
 | `exception_queue.json` | 失败、阻塞、待验证和低置信度记录 |
@@ -643,44 +650,39 @@ python tools/build_results.py `
 
 ### 10.1 Runner 自动阻塞复测
 
-完整执行默认开启：
+首轮执行不再自动启动阻塞复测。必须先完成首轮逐行 LLM 复核，再显式生成复测队列；
+`--auto-retest-blocked` 仅保留为旧命令的兼容参数，当前流程会拒绝在首轮复核前执行它。
 
 ```text
---auto-retest-blocked
+--no-auto-retest-blocked
 ```
 
-首轮结束后，Runner 会：
+完成首轮执行后，Runner 只会：
 
-1. 仅选择首轮 `⛔阻塞` 用例。
-2. 生成 `blocked_retest_queue.json`。
-3. 在 `blocked-retest/` 下逐条重新 setup。
-4. 最多复测一轮。
-5. 生成 `execution_records.retested.json`。
+1. 保留首轮 `execution_records.json`。
+2. 生成 `llm_review_queue.json`。
+3. 等待复核 Agent 完成逐行 `llm_reviews.json`。
+4. 合并为 `results.reviewed.json`。
+5. 再由 `retest_results.py plan` 按复核后的状态生成复测队列。
 
-默认兼容模式会重放已校验的 action plan。需要让 Agent 重新理解和选择动作时，使用：
+需要让当前 Agent 重新理解和选择动作时，先使用复核后的结果生成队列，再执行：
 
 ```powershell
+python tools/retest_results.py plan `
+  --results <run>\results.reviewed.json `
+  --statuses blocked,pending,fail,partial `
+  --out <run>\retest_queue.json
+
 python tools/_run_three_sheets.py `
   --app <app-slug> `
   --source <cases.xlsx> `
-  --retest-queue <run>\blocked_retest_queue.json `
-  --llm-retest `
-  --output <run>\blocked-retest
+  --retest-queue <run>\retest_queue.json `
+  --current-agent `
+  --no-auto-retest-blocked `
+  --output <run>\retest
 ```
 
-LLM 复测要求 provider-neutral 的独立会话边界；完整运行需要由桌面宿主提供：
-
-```text
-SIXGILL_AGENT_SESSION_FACTORY=module:function
-```
-
-复测 Agent 必须重新读取原始 Excel、当前 Profile 和实时截图/UI 树；旧 action plan 只能作审计参考，不能继续作为动作来源。
-
-如果要查看未经自动复测的首轮结果：
-
-```powershell
-python tools/_run_three_sheets.py ... --no-auto-retest-blocked
-```
+LLM 复测要求 provider-neutral 的独立会话边界；复测 Agent 必须重新读取原始 Excel、当前 Profile 和实时截图/UI 树；旧 action plan 只能作审计参考，不能继续作为动作来源。
 
 ### 10.2 显式复测其他未通过状态
 
@@ -688,11 +690,17 @@ python tools/_run_three_sheets.py ... --no-auto-retest-blocked
 
 ```powershell
 python tools/retest_results.py plan `
-  --results <run>\results.json `
+  --results <run>\results.reviewed.json `
   --scope sheet `
   --scope-name <Sheet名称> `
   --out <run>\retest_queue.json
 ```
+
+`retest_results.py plan` 默认有首轮复核门禁：当结果的
+`execution_manifest.llm_review_required=true` 时，每条用例必须已经带有
+`llm_review`，否则直接拒绝生成复测队列。这样不能把首轮 Agent Action Plan
+执行产生的中间 `🟡待验证` 结果直接当成复测输入。只有兼容旧产物时，才允许显式
+传入 `--allow-unreviewed`；正式流程不得使用该选项。
 
 用队列执行：
 

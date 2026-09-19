@@ -1,11 +1,58 @@
 slug: zhongyuan
 app_version: 9.53.12
 entries:
-- key: quote.global_indices
-  path: 底部tab行情 → 顶部自选切换到行情 → 全球tab（股指）
-  last_verified: '2026-08-31'
+- key: startup.cold_launch
+  path: 冷启动→广告倒计时结束→点击 resource-id=tv_dialog_ok（文字“确定”）关闭“故障公告”→底部tab“行情”→顶部 right_radio→进入“全球”或“A股→沪深京”；公告关闭前保留约20秒等待，避免过早操作
+  last_verified: '2026-09-19'
   app_version: 9.53.12
-  evidence_run: output/2026-08-31-zhongyuan-guozhi-full
+  evidence_run: output/2026-09-19-zhongyuan-guzhi-hushenjing-rerun-v3
+  status: verified
+- key: quote.global_indices
+  path: 底部tab行情→顶部自选切换到行情→点击“全球”→等待约8–10秒；目标页优先以 hx_page_view + hx_page_content + “全球”页签确认，不只依赖 gz_index_container
+  last_verified: '2026-09-19'
+  app_version: 9.53.12
+  evidence_run: output/2026-09-19-zhongyuan-guzhi-hushenjing-rerun-v3
+  status: verified
+- key: quote.a_stock_hushenjing
+  path: 底部tab行情→顶部自选切换到行情→A股→沪深京；点击“A股/沪深京”后等待约8–10秒；目标页以 hstab + hx_page_view + hx_page_content + 选中“沪深京”确认
+  last_verified: '2026-09-19'
+  app_version: 9.53.12
+  evidence_run: output/2026-09-19-zhongyuan-guzhi-hushenjing-rerun-v3
+  status: verified
+- key: quote.domestic_index_list
+  path: 全球股指页→国内指数模块“更多”→国内指数列表；页面门禁为 hx_page_title_bar + 返回 + 国内指数 + table；入口坐标暂不作为稳定画像入口
+  last_verified: '2026-09-19'
+  app_version: 9.53.12
+  evidence_run: output/2026-09-19-zhongyuan-guzhi-hushenjing-rerun-v3
+  status: unverified
+- key: quote.search_page
+  path: 行情页面右上角搜索→search_title_lay + 股票/基金/资讯/问答 + 关闭；搜索结果以实际输入值和结果名称共同确认
+  last_verified: '2026-09-19'
+  app_version: 9.53.12
+  evidence_run: output/2026-09-19-zhongyuan-guzhi-hushenjing-rerun-v3
+  status: verified
+- key: quote.index_detail
+  path: 指数入口或列表首行→指数行情详情；以 quotes_rootview + quote_tool_bar + backButton 确认指数身份；指数分时页不应出现股票盘口
+  last_verified: '2026-09-19'
+  app_version: 9.53.12
+  evidence_run: output/2026-09-19-zhongyuan-guzhi-hushenjing-rerun-v3
+  status: verified
+- key: quote.hushenjing_funds
+  path: 沪深京根页面→看资金；以“看资金”标题、选中“沪深京”tab、funds_list_scroll_view + look_at_funds_content 确认
+  last_verified: '2026-09-19'
+  app_version: 9.53.12
+  evidence_run: output/2026-09-19-zhongyuan-guzhi-hushenjing-rerun-v3
   status: verified
 capabilities: []
-verified_chains: []
+verified_chains:
+- key: chain.zhongyuan.cold_start_recovery
+  steps:
+  - 软复位或根页面门禁失败时重新冷启动中原App
+  - 等待广告/故障公告稳定
+  - 点击 tv_dialog_ok（文字“确定”）关闭公告
+  - 底部进入行情并点击 right_radio
+  - 按目标进入全球或A股→沪深京
+  - 目标页等待约8–10秒后用稳定页面ID和选中页签确认
+  last_verified: '2026-09-19'
+  evidence_run: output/2026-09-19-zhongyuan-guzhi-hushenjing-rerun-v3
+  status: verified

@@ -13,7 +13,7 @@ and lets the Agent re-understand one original row at a time from live evidence.
 Typical workflow::
 
     python tools/retest_results.py plan \
-        --results first-pass/results.json --scope sheet --scope-name 行情 \
+        --results first-pass/results.reviewed.json --scope sheet --scope-name 行情 \
         --out first-pass/retest_queue.json
 
     # The executor consumes queue ``cases`` one item at a time and writes
@@ -151,12 +151,75 @@ def _in_scope(record: Mapping[str, Any], scope: str, scope_name: str | None) -> 
     return _module_name(record) == scope_name
 
 
+def _manifest_requires_llm_review(document: Any) -> bool:
+    if not isinstance(document, Mapping):
+        return False
+    manifest = document.get("execution_manifest")
+    if isinstance(manifest, Mapping) and manifest.get("llm_review_required"):
+        return True
+    return bool(document.get("llm_review_required"))
+
+
+def _ensure_first_pass_reviewed(
+    document: Any,
+    records: Sequence[Mapping[str, Any]],
+    *,
+    require_review: bool,
+) -> None:
+    """Prevent a raw action-plan run from becoming a retest queue.
+
+    Full Agent-plan executions intentionally persist pending rows until the
+    row-level LLM review is merged.  Retesting that intermediate document
+    would silently turn the review stage into a second execution stage.  The
+    bounded internal blocked-retest path opts out explicitly, while the
+    public ``plan`` command is strict by default.
+    """
+
+    if not require_review or not _manifest_requires_llm_review(document):
+        return
+    if not isinstance(document, Mapping) or document.get("reviewed") is not True:
+        raise RetestError(
+            "首轮 LLM 复核未完成，禁止生成复测队列；"
+            "结果文档缺少 reviewed=true。请先运行 llm_review_results.py merge。"
+        )
+    if _text(document.get("review_scope")) != "single_excel_row":
+        raise RetestError(
+            "首轮 LLM 复核未完成，禁止生成复测队列；"
+            "结果文档缺少 review_scope=single_excel_row。"
+        )
+    if not isinstance(document.get("review_binding"), Mapping):
+        raise RetestError(
+            "首轮 LLM 复核未完成，禁止生成复测队列；结果文档缺少 review_binding。"
+        )
+    if not isinstance(document.get("agent"), Mapping):
+        raise RetestError(
+            "首轮 LLM 复核未完成，禁止生成复测队列；结果文档缺少实际 reviewer 元数据。"
+        )
+    missing = [
+        _case_key(record, required=False) or f"结果#{index}"
+        for index, record in enumerate(records, start=1)
+        if not isinstance(record.get("llm_review"), Mapping)
+        or not isinstance(record.get("llm_review", {}).get("expected_checks"), list)
+        or not record.get("llm_review", {}).get("expected_checks")
+    ]
+    if missing:
+        preview = ", ".join(missing[:8])
+        if len(missing) > 8:
+            preview += f" 等 {len(missing)} 条"
+        raise RetestError(
+            "首轮 LLM 复核未完成，禁止生成复测队列；"
+            f"缺少逐条 llm_review: {preview}。"
+            "请先运行 llm_review_results.py merge，或仅在兼容旧产物时显式使用 --allow-unreviewed。"
+        )
+
+
 def plan_retests(
     document: Any,
     *,
     scope: str = "all",
     scope_name: str | None = None,
     status_buckets: Sequence[str] = DEFAULT_RETEST_BUCKETS,
+    require_review: bool = True,
 ) -> dict[str, Any]:
     """Create a deterministic queue containing one entry per retest case."""
 
@@ -168,6 +231,7 @@ def plan_retests(
         raise RetestError(f"不支持的 status bucket: {', '.join(sorted(unknown))}")
 
     records = _normalize(document, strict=False)
+    _ensure_first_pass_reviewed(document, records, require_review=require_review)
     queue: list[dict[str, Any]] = []
     seen: set[str] = set()
     for record in records:
@@ -407,6 +471,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=",".join(DEFAULT_RETEST_BUCKETS),
         help="需要复测的状态桶，逗号分隔；默认 fail,partial,blocked,pending,other",
     )
+    plan.add_argument(
+        "--allow-unreviewed",
+        action="store_true",
+        help="允许对未完成首轮 LLM 复核的旧结果生成队列（仅兼容旧产物，不推荐）",
+    )
 
     merge = subparsers.add_parser("merge", help="合并逐条复测结果并保留两轮历史")
     merge.add_argument("--results", required=True, help="首轮 results.json")
@@ -434,12 +503,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "plan":
             if args.scope != "all" and not _text(args.scope_name):
                 parser.error("--scope 为 sheet/module 时必须提供 --scope-name")
+            if args.allow_unreviewed:
+                print(
+                    "retest_results: 警告：已显式允许未完成首轮 LLM 复核的结果进入复测队列；"
+                    "该选项仅用于兼容旧产物。",
+                    file=sys.stderr,
+                )
             statuses = tuple(item.strip() for item in args.statuses.split(",") if item.strip())
             document = plan_retests(
                 _load_document(Path(args.results).expanduser().resolve()),
                 scope=args.scope,
                 scope_name=_text(args.scope_name) or None,
                 status_buckets=statuses,
+                require_review=not args.allow_unreviewed,
             )
             output = write_json(document, args.out)
             print(json.dumps({"out": str(output), "cases": len(document["cases"])}, ensure_ascii=False))

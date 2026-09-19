@@ -56,6 +56,43 @@ def test_plan_selects_non_passing_cases_one_by_one_and_excludes_skip():
     assert plan["agent_binding"]["planner"]["agent"] == "Trae"
 
 
+def test_plan_rejects_unreviewed_full_run_before_retest():
+    document = {
+        "execution_manifest": {"llm_review_required": True},
+        "cases": [_case(2, "TC-PENDING", "🟡待验证", "已完成动作并采集截图")],
+    }
+
+    with pytest.raises(RetestError, match="首轮 LLM 复核未完成"):
+        plan_retests(document)
+
+
+def test_plan_accepts_reviewed_full_run_and_selects_only_non_pass():
+    pending = _case(2, "TC-PENDING", "🟡待验证", "已完成动作并采集截图")
+    pending["llm_review"] = {
+        "status": "🟡待验证",
+        "expected_result_match": None,
+        "expected_checks": [{"criterion": "页面事实", "matched": None}],
+    }
+    passed = _case(3, "TC-PASS", "✅通过", "页面显示完整数据")
+    passed["llm_review"] = {
+        "status": "✅通过",
+        "expected_result_match": True,
+        "expected_checks": [{"criterion": "页面事实", "matched": True}],
+    }
+    document = {
+        "execution_manifest": {"llm_review_required": True},
+        "reviewed": True,
+        "review_scope": "single_excel_row",
+        "review_binding": {"run_id": "run-test", "queue_id": "queue-test"},
+        "agent": {"name": "Codex", "model": "test", "prompt_version": "row-review-v1"},
+        "cases": [pending, passed],
+    }
+
+    plan = plan_retests(document)
+
+    assert [item["retest_id"] for item in plan["cases"]] == ["行情!2"]
+
+
 def test_merge_retest_replaces_visible_result_but_keeps_both_attempts():
     initial = {
         "schema_version": "2.0",

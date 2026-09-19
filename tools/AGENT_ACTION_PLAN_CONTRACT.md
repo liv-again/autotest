@@ -103,18 +103,15 @@
 
 ## 首轮阻塞项延迟复测
 
-完整执行默认启用 `--auto-retest-blocked`。首轮所有行完成后，执行器会在同一
-运行目录生成 `blocked_retest_queue.json`，只选择首轮状态为 `blocked` 的行，
-并在 `blocked-retest/` 子目录逐条重新执行一次。兼容模式继续使用首轮已经校验的
-Agent action plan；若显式传入 `--llm-retest`，则每条由独立的 retester 会话重新读取
-原始 Excel 用例、App 画像和每条 Case 开始时的实时截图/UI 树，一次返回并执行完整 Case Plan，旧计划只作
-历史审计参考。两种模式都会重新执行公共 setup、产生新的截图/UI 观察和动作轨迹。
-第二轮结束后写入 `execution_records.retested.json`，其中 `attempts` 保留首轮与复测
-两份记录，最终可见状态以第二轮为准。
+完整执行不再在首轮结束后自动复测阻塞项。首轮执行完成后先生成
+`llm_review_queue.json`，由独立只读 reviewer 完成逐行语义复核并合并为
+`results.reviewed.json`；之后才允许使用 `retest_results.py plan` 按复核后的
+`blocked`、`pending`、`fail` 或 `partial` 状态生成复测队列。
 
-该流程最多运行一轮，不会递归复测。需要诊断首轮原始行为时可显式传入
-`--no-auto-retest-blocked`。如果首轮没有阻塞项，只写入状态为 `not_needed` 的
-`blocked_retest_summary.json`，不会再次启动 App。
+复测时每条由独立的 retester 会话重新读取原始 Excel 用例、App 画像和每条 Case
+开始时的实时截图/UI 树，一次返回并执行完整 Case Plan，旧计划只作历史审计参考。
+复测结束后写入新的执行记录，其中 `attempts` 保留首轮与复测两份记录，最终还必须
+再次经过逐行 reviewer 复核，才能生成正式 Excel 结果。
 
 ## 异常与复测
 
@@ -123,10 +120,10 @@ Agent action plan；若显式传入 `--llm-retest`，则每条由独立的 retes
 `tools/agent_session.py` 定义的独立桌面 Agent 会话：它逐轮读取原始 Excel、画像、
 当前截图/UI 树和上一轮事实，决定一个动作并等待新的观察，再继续规划。规划、复测、
 复核默认使用同一 Agent/model 绑定，但 session_id 不同；复核会话始终只读，不能继续
-操作设备。动作、页面门禁或证据失败会写入逐行轨迹和异常队列。完整运行首轮结束后，
-默认将 `blocked` 行放入 `blocked_retest_queue.json`，在隔离的 `blocked-retest/`
-目录中重新 setup 并复测一轮，再合并为 `execution_records.retested.json`。LLM 在测后
-读取截图、UI 树、轨迹和 Excel 预期，生成逐行复核结论；复核不能覆盖确定性门禁。
+操作设备。动作、页面门禁或证据失败会写入逐行轨迹和异常队列。首轮结束后必须先
+完成逐行 LLM 复核，再按复核后的状态生成显式复测 Queue；复测在隔离目录中重新
+setup 并保留首轮与复测两份记录。LLM 在测后读取截图、UI 树、轨迹和 Excel 预期，
+生成逐行复核结论；复核不能覆盖确定性门禁。
 
 ### 规划、复测和复核的会话绑定
 

@@ -803,7 +803,7 @@ def run_retest_case_plan(
             "evidence": [],
             "plans": [],
             "llm_retest": {
-                "mode": "whole_case_plan_queue_session",
+                "mode": session_binding.get("session_mode") or "whole_case_plan_queue_session",
                 "session": session_binding,
                 "plan_count": 0,
                 "action_count": 0,
@@ -835,7 +835,7 @@ def run_retest_case_plan(
             "evidence": list(dict.fromkeys(evidence)),
             "plans": [],
             "llm_retest": {
-                "mode": "whole_case_plan_queue_session",
+                "mode": session_binding.get("session_mode") or "whole_case_plan_queue_session",
                 "session": session_binding,
                 "plan_count": 0,
                 "action_count": 0,
@@ -868,7 +868,7 @@ def run_retest_case_plan(
             "evidence": list(dict.fromkeys(evidence)),
             "plans": [],
             "llm_retest": {
-                "mode": "whole_case_plan_queue_session",
+                "mode": session_binding.get("session_mode") or "whole_case_plan_queue_session",
                 "session": session_binding,
                 "plan_count": 0,
                 "action_count": 0,
@@ -960,7 +960,7 @@ def run_retest_case_plan(
         "evidence": list(dict.fromkeys(evidence)),
         "plans": [plan],
         "llm_retest": {
-            "mode": "whole_case_plan_queue_session",
+            "mode": session_binding.get("session_mode") or "whole_case_plan_queue_session",
             "session": session_binding,
             "plan_count": 1,
             "action_count": len(plan.get("navigation") or []) + len(plan.get("actions") or []),

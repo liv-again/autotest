@@ -95,7 +95,7 @@ python tools/llm_review_results.py merge `
 }
 ```
 
-`agent.name` 必须是本次实际使用的非空 Agent 名称，可以是 Codex、OpenCode、Trae、Claude 或其他接入的 Agent；不得伪造或留空。`model` 和 `prompt_version` 不能为空。每个 `reviews` 项必须带当前队列中的 `case_id` 以及 `target_page_match`、`action_effect_match`、`expected_result_match`、`confidence`、`visible_facts`、`reason` 和 `status`。`reason` 必须是非空、基于截图与执行事实的具体判断理由，不能只写“通过”“正常”或“符合预期”。
+`agent.name` 必须是本次实际使用的非空 Agent 名称，可以是 Codex、OpenCode、Trae、Claude 或其他接入的 Agent；不得伪造或留空。`model` 和 `prompt_version` 不能为空。每个 `reviews` 项必须带当前队列中的 `case_id` 以及 `target_page_match`、`action_effect_match`、`expected_result_match`、`expected_checks`、`confidence`、`visible_facts`、`reason` 和 `status`。`expected_checks` 必须逐项拆解当前 Excel `expected`，每项包含 `criterion`、`matched`、`observed` 和非空 `evidence_refs`；所有检查项为 true 才能把 `expected_result_match` 写成 true，任一 false 写成 false，存在未知项才写成 null。`reason` 必须是非空、基于当前行截图与执行事实的具体判断理由，并引用至少一个检查项或观察事实，不能只写“通过”“正常”“符合预期”，也不能套用与当前 `expected` 无关的排序、刷新、切换或数据完整性理由。
 
 合并复核结果时，执行器会把该理由写入每条结果的 `actual`，固定保留以下三段：
 

@@ -57,7 +57,15 @@ def _review(queue, **verdict):
                 "confidence": 0.99,
                 "status": "pass",
                 "visible_facts": ["港股"],
-                "reason": "截图与预期一致",
+                "expected_checks": [
+                    {
+                        "criterion": "显示港股详情",
+                        "matched": True,
+                        "observed": "页面观察显示港股详情",
+                        "evidence_refs": ["page_observation", "evidence:0"],
+                    }
+                ],
+                "reason": "页面观察显示港股详情，截图与本行预期一致",
                 **verdict,
             }
         ],
@@ -115,7 +123,7 @@ def test_llm_cannot_upgrade_deterministic_blocked_case():
     queue = build_review_queue(document, run_dir="output/run")
     result = merge_reviews(
         document,
-        _review(queue, reason="截图看起来符合"),
+        _review(queue, reason="截图显示港股详情，但执行器仍记录为阻塞"),
         queue,
     )
 
@@ -132,14 +140,14 @@ def test_llm_marks_wrong_page_as_fail():
         _review(
             queue,
             target_page_match=False,
-            reason="截图页面与港股详情不一致",
+            reason="截图未显示港股详情，未满足显示港股详情的本行预期",
         ),
         queue,
     )
 
     assert result["cases"][0]["status"] == "❌不通过"
     assert "港股详情" in result["cases"][0]["blocked_reason"]
-    assert "判断理由：判定为❌不通过。截图页面与港股详情不一致" in result["cases"][0]["actual"]
+    assert "判断理由：判定为❌不通过。截图未显示港股详情，未满足显示港股详情的本行预期" in result["cases"][0]["actual"]
 
 
 def test_llm_review_rejects_empty_reason():
@@ -147,6 +155,30 @@ def test_llm_review_rejects_empty_reason():
     queue = build_review_queue(document, run_dir="output/run")
     with pytest.raises(LLMReviewError, match="判断理由无效"):
         merge_reviews(document, _review(queue, reason=""), queue)
+
+
+def test_llm_review_rejects_generic_reason_unrelated_to_expected():
+    document = _execution()
+    queue = build_review_queue(document, run_dir="output/run")
+    with pytest.raises(LLMReviewError, match="expected_checks"):
+        merge_reviews(
+            document,
+            _review(
+                queue,
+                expected_result_match=None,
+                status="pending",
+                expected_checks=[
+                    {
+                        "criterion": "显示港股详情",
+                        "matched": None,
+                        "observed": "页面观察未完成语义核对",
+                        "evidence_refs": ["page_observation"],
+                    }
+                ],
+                reason="预期还涉及排序、刷新、切换或数据完整性，当前保留待验证",
+            ),
+            queue,
+        )
 
 
 def test_llm_review_requires_every_case():

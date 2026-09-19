@@ -22,16 +22,15 @@ class Session:
 SIXGILL_AGENT_SESSION_FACTORY=your_host_module:create_session
 ```
 
-如果使用完整运行的 `--auto-retest-blocked --llm-retest`，延迟复测会由独立子进程启动，
-因此必须使用环境变量方式；进程内注册只适用于把 runner 嵌入桌面宿主或直接运行显式
-`--retest-queue` 的场景。
+首轮自动阻塞复测已停用。必须先完成首轮 LLM 复核，再通过显式
+`--retest-queue` 启动复测；该场景可以使用进程内注册或桌面宿主提供的环境变量方式。
 
 每次调用 `create_agent_session()` 都会生成新的 `session_id`。执行角色的默认绑定如下：
 
 | 角色 | Agent/model | 会话 |
 | --- | --- | --- |
 | `planner` | action plan 中实际记录的规划 Agent/model | 每个 Sheet/模块新会话 |
-| `retester` | 默认继承 planner | 一个 blocked retest queue 共用一个长期会话 |
+| `retester` | 默认继承 planner | 一个复测 Queue 共用一个长期会话 |
 | `reviewer` | 默认继承 planner | 独立只读会话 |
 
 角色级覆盖必须显式使用 `SIXGILL_RETEST_AGENT_NAME`/`SIXGILL_RETEST_MODEL` 或
@@ -74,3 +73,43 @@ Runner 会先校验完整计划，再连续执行 navigation、target page gate 
 
 如果宿主不可用、计划协议不合法、目标页门禁失败或执行/证据采集失败，执行器安全地保留
 `⛔阻塞`，不会猜测动作，也不会回退到旧的 runtime recovery CLI。
+
+## 当前 Codex Agent 内联模式
+
+如果当前任务由正在运行的 Codex Agent 直接编排，而不是由另一个桌面 Agent
+宿主提供 factory，可以显式使用：
+
+```powershell
+python tools/_run_three_sheets.py `
+  --retest-queue <queue.json> `
+  --current-agent `
+  --no-auto-retest-blocked `
+  --output <run>
+```
+
+该模式不调用 `create_agent_session()`，也不创建子 Agent。Runner 为每个 Case
+只写一个 `current_agent_case_plan` 请求到
+`<run>/current-agent-bridge/requests/`，当前 Codex Agent 读取请求中的 Case、
+Expected、首轮事实和实时观察后，把一个完整 Runner Case Plan 写到对应的
+`responses/` 路径。Runner 校验该 Plan 后执行全部 navigation/actions，并记录
+证据，再进入下一条 Case。
+
+`session_context.json` 只在桥接目录初始化时写入一次，供当前 Agent 复用完整参考
+资料；`session_manifest.json` 和 `CURRENT_REQUEST.json` 用于审计和交接。该模式
+中的 `session_id` 是当前 Codex 线程的逻辑标识，不代表新建了独立 LLM 会话，也
+不提供独立 reviewer。当前 Agent 负责规划，Runner 负责执行和取证。
+如需记录当前 Agent 的实际模型，可设置 `SIXGILL_CURRENT_AGENT_NAME` 和
+`SIXGILL_CURRENT_AGENT_MODEL`；未设置时名称默认为 `Codex`，模型沿用队列绑定。
+
+当前 Agent 可以用辅助命令查看请求并提交计划：
+
+```powershell
+python tools/current_agent_bridge.py inspect `
+  --bridge-dir <run>/current-agent-bridge `
+  --full
+
+python tools/current_agent_bridge.py submit `
+  --bridge-dir <run>/current-agent-bridge `
+  --request-id <CURRENT_REQUEST.json 中的 request_id> `
+  --plan <当前 Agent 写出的 case_plan.json>
+```

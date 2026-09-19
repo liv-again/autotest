@@ -66,3 +66,46 @@ def test_text_and_id_taps_ignore_hidden_or_disabled_nodes(monkeypatch):
     assert droid.tap_text("入口") == 0
     assert droid.tap_id("disabled") == 1
     assert calls == [("shell", "input", "tap", "30", "30")]
+
+
+def test_type_text_uses_adb_keyboard_for_unicode(monkeypatch):
+    calls = []
+
+    def _adb(*args, **kwargs):
+        calls.append(args)
+        if "pm" in args and "path" in args:
+            return 0, "package:/data/app/adbkeyboard.apk\n", ""
+        return 0, "Broadcast completed: result=0\n", ""
+
+    monkeypatch.setattr(droid, "adb", _adb)
+
+    rc, _, detail = droid.type_text("银行", serial="device-1")
+
+    assert rc == 0
+    assert "adb-keyboard" in detail
+    assert (
+        "-s", "device-1", "shell", "ime", "enable",
+        "com.android.adbkeyboard/.AdbIME",
+    ) in calls
+    assert (
+        "-s", "device-1", "shell", "ime", "set",
+        "com.android.adbkeyboard/.AdbIME",
+    ) in calls
+    assert calls[-1] == (
+        "-s", "device-1", "shell", "am", "broadcast", "-a", "ADB_INPUT_TEXT",
+        "--es", "msg", "银行",
+    )
+
+
+def test_type_text_reports_missing_adb_keyboard_for_unicode(monkeypatch):
+    monkeypatch.setattr(
+        droid,
+        "adb",
+        lambda *args, **kwargs: (0, "", ""),
+    )
+
+    rc, _, detail = droid.type_text("银行", serial="device-1")
+
+    assert rc != 0
+    assert "ADB Keyboard" in detail
+    assert "未安装" in detail

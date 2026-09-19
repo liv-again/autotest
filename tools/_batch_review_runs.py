@@ -49,6 +49,10 @@ def _review_for(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def process(run_dir: Path) -> None:
+    raise RuntimeError(
+        "_batch_review_runs.py 已停用：不能用固定规则伪造 llm_reviews.json；"
+        "请由真实复核 Agent 逐条读取 llm_review_queue.json 后调用 llm_review_results.py merge。"
+    )
     queue_path = run_dir / "llm_review_queue.json"
     if not queue_path.is_file():
         return

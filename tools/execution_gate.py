@@ -305,6 +305,14 @@ def validate_execution_contract(
             judgment_issue = actual_contract_issue(observation)
             if judgment_issue:
                 errors.append(f"{identity}: {judgment_issue}")
+        # Agent-plan executions deliberately leave successful low-level
+        # actions as pending until the row-level semantic review is merged.
+        # A pending/blocked intermediate record must therefore not be
+        # accepted as a formal result merely because it has a trace, evidence
+        # and a generic executor reason.  The review requirement applies to
+        # every selected row, not only rows that already look like passes.
+        if llm_review_required and not isinstance(record.get("llm_review"), Mapping):
+            errors.append(f"{identity}: 该执行计划要求逐行 LLM 复核，缺少 llm_review")
         if row_scoped_manifest and settings.get("require_per_row_execution", True):
             if not _text(record.get("sheet")) or record.get("row") in (None, ""):
                 errors.append(f"{identity}: 行级执行结果必须带 sheet + row")
@@ -319,8 +327,6 @@ def validate_execution_contract(
                 errors.append(f"{identity}: 缺少执行后的 observation/actual")
             if settings.get("require_evidence", True) and not evidence:
                 errors.append(f"{identity}: 缺少用例级 evidence")
-            if llm_review_required and not isinstance(record.get("llm_review"), Mapping):
-                errors.append(f"{identity}: 该执行计划要求逐行 LLM 复核，缺少 llm_review")
         elif bucket == "blocked":
             if not _reason(record):
                 errors.append(f"{identity}: 阻塞结果必须填写 blocked_reason/blocker/reason")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Mapping
@@ -57,6 +58,108 @@ def _normalised_bool(value: Any) -> bool | None:
         if value in {"false", "no", "0", "fail", "不通过"}:
             return False
     raise LLMReviewError(f"LLM 复核布尔字段非法: {value!r}")
+
+
+def _compact(value: Any) -> str:
+    """Normalize presentation punctuation for review-contract comparisons."""
+
+    return re.sub(r"[\s，。！？；：、,.!?;:（）()\[\]{}<>《》\"'“”‘’]+", "", _text(value)).casefold()
+
+
+def _criterion_overlaps_expected(expected: Any, criterion: str) -> bool:
+    """Require each check to be grounded in the current Excel expectation.
+
+    The reviewer may split a clause such as ``输入框和取消控件可见`` into
+    smaller checks.  Exact full-string equality would reject that useful
+    decomposition, so accept a meaningful two-character clause or a
+    three-character contiguous fragment while still rejecting unrelated
+    generic checks.
+    """
+
+    expected_text = _compact(expected)
+    criterion_text = _compact(criterion)
+    if not expected_text or not criterion_text:
+        return False
+    if criterion_text in expected_text or expected_text in criterion_text:
+        return True
+    parts = [
+        _compact(part)
+        for part in re.split(r"和|与|及|并|[；;，,。！？、\s]+", criterion)
+        if len(_compact(part)) >= 2
+    ]
+    if any(part and part in expected_text for part in parts):
+        return True
+    return any(
+        criterion_text[index : index + 3] in expected_text
+        for index in range(max(0, len(criterion_text) - 2))
+    )
+
+
+def _validate_expected_checks(
+    review: Mapping[str, Any],
+    record: Mapping[str, Any],
+    identity: str,
+) -> list[dict[str, Any]]:
+    """Validate the row-scoped semantic evidence supplied by the reviewer."""
+
+    raw_checks = review.get("expected_checks")
+    if not isinstance(raw_checks, list) or not raw_checks:
+        raise LLMReviewError(f"LLM 复核项缺少 expected_checks: {identity}")
+
+    checks: list[dict[str, Any]] = []
+    states: list[bool | None] = []
+    for index, raw_check in enumerate(raw_checks, start=1):
+        if not isinstance(raw_check, Mapping):
+            raise LLMReviewError(f"expected_checks 第 {index} 项必须是对象: {identity}")
+        criterion = _text(raw_check.get("criterion"))
+        if len(criterion) < 2:
+            raise LLMReviewError(f"expected_checks 第 {index} 项缺少具体 criterion: {identity}")
+        if not _criterion_overlaps_expected(record.get("expected"), criterion):
+            raise LLMReviewError(
+                f"expected_checks 第 {index} 项与当前 Excel expected 无关: {identity}: {criterion}"
+            )
+        matched = _normalised_bool(raw_check.get("matched"))
+        observed = _text(raw_check.get("observed"))
+        refs = raw_check.get("evidence_refs")
+        if not isinstance(refs, list) or not refs or not all(_text(ref) for ref in refs):
+            raise LLMReviewError(f"expected_checks 第 {index} 项缺少 evidence_refs: {identity}")
+        if not observed:
+            raise LLMReviewError(f"expected_checks 第 {index} 项缺少 observed: {identity}")
+        states.append(matched)
+        checks.append(
+            {
+                "criterion": criterion,
+                "matched": matched,
+                "observed": observed,
+                "evidence_refs": [_text(ref) for ref in refs],
+            }
+        )
+
+    derived: bool | None
+    if any(state is False for state in states):
+        derived = False
+    elif any(state is None for state in states):
+        derived = None
+    else:
+        derived = True
+    declared = _normalised_bool(review.get("expected_result_match"))
+    if declared is not derived:
+        raise LLMReviewError(
+            f"expected_result_match 与 expected_checks 不一致: {identity}"
+        )
+    return checks
+
+
+def _reason_matches_checks(reason: str, checks: list[Mapping[str, Any]]) -> bool:
+    reason_text = _compact(reason)
+    if not reason_text:
+        return False
+    for check in checks:
+        for anchor in (check.get("criterion"), check.get("observed")):
+            compact = _compact(anchor)
+            if compact and compact in reason_text:
+                return True
+    return False
 
 
 def _verdict_status(review: Mapping[str, Any]) -> str:
@@ -145,6 +248,7 @@ def merge_reviews(
             missing.append(identity)
             continue
         item = dict(record)
+        expected_checks = _validate_expected_checks(review, record, identity)
         executor_bucket = status_bucket(record.get("status"))
         proposed = _verdict_status(review)
         # Deterministic setup/action/evidence failures are terminal.  LLM can
@@ -158,6 +262,12 @@ def merge_reviews(
         else:
             final_status = proposed
             reason = _text(review.get("reason"))
+        requested_status = _text(review.get("status")).casefold()
+        review_reason = _text(review.get("reason"))
+        if requested_status != "blocked" and not _reason_matches_checks(review_reason, expected_checks):
+            raise LLMReviewError(
+                f"LLM 复核理由未引用当前行的 expected_checks: {identity}"
+            )
         item["pre_review_status"] = record.get("status")
         item["status"] = final_status
         item["llm_review"] = {
@@ -167,6 +277,7 @@ def merge_reviews(
             "expected_result_match": review.get("expected_result_match"),
             "confidence": review.get("confidence"),
             "visible_facts": review.get("visible_facts") or [],
+            "expected_checks": expected_checks,
             "reason": reason,
         }
         if not reason:

@@ -131,6 +131,9 @@ def build_review_queue(
             "observe 事件只是执行期间请求采集页面事实的证据，observation_requested 和 execution_mode 必须分开读取，"
             "不能因为 observe 存在或缺失直接改变最终 verdict；"
             "也不能用 LLM 结果覆盖确定性页面/动作阻塞。每项必须返回 JSON；reason 必须是非空的具体判断理由，"
+            "必须把 expected 拆成一个或多个 expected_checks；每个检查项必须引用 expected 中的具体预期，"
+            "填写 matched=true/false/null、observed 和 evidence_refs。reason 必须引用至少一个检查项或其观察事实，"
+            "不能使用与当前 expected 无关的排序、刷新、切换或数据完整性泛化理由；"
             "并会被回填到 AI实测结果的‘判断理由’段落。默认使用 review_agent_default 中的 Agent 和 model；"
             "复测阶段如存在 llm_retest 记录，只把它当作执行事实；复核必须创建独立的只读会话，"
             "不能沿用复测会话的上下文或继续操作设备。"
@@ -141,6 +144,14 @@ def build_review_queue(
             "target_page_match": "true|false|null",
             "action_effect_match": "true|false|null",
             "expected_result_match": "true|false|null",
+            "expected_checks": [
+                {
+                    "criterion": "具体预期项，来自当前 Excel expected",
+                    "matched": "true|false|null",
+                    "observed": "截图/UI/动作证据中的对应事实",
+                    "evidence_refs": ["page_observation|execution_trace|action_trace|evidence:<index>"]
+                }
+            ],
             "confidence": "number 0..1",
             "visible_facts": "string[]",
             "reason": "non-empty string; explain why the verdict matches or does not match the evidence",

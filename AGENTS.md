@@ -45,6 +45,19 @@
 
 执行器通过 `--app` 选择 `apps/<slug>/app.yaml`；没有 `adapter.py` 的 App 必须走 `tools.app_adapter.GenericAdapter`，不得在通用执行器中新增券商专用包名、坐标或页面判断。
 
+## Site Comparison Workflow
+
+When the user asks to run or continue a new/old market-site comparison:
+
+1. Read `docs/site_compare_workflow.md` before taking action.
+2. Before every site-comparison action, run `python tools/site_compare_ctl.py status --json`.
+3. Never create, edit, or infer `runs/site_compare/state.json` manually; use `site_compare_ctl.py` only.
+4. Use only source, App, output paths, phase, and next action returned by the controller.
+5. When the phase is `WAITING_FOR_OLD_SITE`, stop and ask the user to switch the App to the old site.
+6. Do not start the old-site run until the user explicitly confirms the switch.
+7. New and Old are independent sixgill runs; never use `--resume` to turn New into Old.
+8. Do not modify the existing Runner, Retest, Gate, Review, or result schemas solely for Site Compare.
+
 ## 当前 Codex Agent 内联复测
 
 阻塞复测也可以由当前 Codex Agent 直接编排：使用 `--current-agent

@@ -9,6 +9,7 @@
     "runtime_package": {"type": "string"},
     "adapter": {"type": "string"},
     "default_source": {"type": "string"},
+    "site_compare_source": {"type": "string"},
     "default_output": {"type": "string"},
     "device": {"type": "string"},
     "module_roots": {"type": "object"},

@@ -11,6 +11,7 @@ test_accounts: []
 environment: env.yaml
 profile: profile.yaml
 prerequisites: prerequisites.yaml
+site_compare_source: ../../cases/market_data_compare.xlsx
 
 # Zhongyuan exposes the quote pages through the shared market container.  These
 # contracts are app configuration, not executor logic, and allow the generic

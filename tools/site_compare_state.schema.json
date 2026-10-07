@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sixgill Site Compare state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "phase",
+    "source",
+    "source_sha256",
+    "app",
+    "new_run",
+    "old_run",
+    "comparison_dir",
+    "new_manifest_sha256",
+    "selected_cases_sha256",
+    "comparison_file"
+  ],
+  "properties": {
+    "version": {"const": 1},
+    "phase": {
+      "enum": [
+        "RUNNING_NEW",
+        "WAITING_FOR_OLD_SITE",
+        "RUNNING_OLD",
+        "READY_TO_COMPARE",
+        "COMPLETED"
+      ]
+    },
+    "source": {"type": "string", "minLength": 1},
+    "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "app": {"type": ["string", "null"], "minLength": 1},
+    "new_run": {"type": "string", "minLength": 1},
+    "old_run": {"type": "string", "minLength": 1},
+    "comparison_dir": {"type": "string", "minLength": 1},
+    "new_manifest_sha256": {"type": ["string", "null"]},
+    "selected_cases_sha256": {"type": ["string", "null"]},
+    "comparison_file": {"type": ["string", "null"]}
+  }
+}

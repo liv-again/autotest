@@ -203,6 +203,8 @@ A. 冻结范围
  → L. 审核画像、派生文档、lint、metrics
 ```
 
+完整执行统一通过 `tools/workflow.py start --mode <standard|site_compare|navigation_probe>` 编排；标准模式会在 LLM 复核、必要的复测计划及站点切换/比较等外部输入处持久化暂停，必须使用 `workflow.py continue` 推进。单次 Runner 完成只代表当前执行阶段结束，不代表本轮正式结果或报告已经完成。命令示例和状态说明见 [workflow_orchestration.md](workflow_orchestration.md)。
+
 ### A. 冻结本轮范围
 
 使用前置任务生成的 selection 和 scope hash。执行器的 `--sheet` 只能缩小范围，不能在运行中扩大范围。
@@ -713,13 +715,27 @@ python tools/_run_three_sheets.py `
   --output <run>\retest-run
 ```
 
-合并两轮结果：
+如果首轮或复测 `execution_manifest.llm_review_required` 为 true，或存在缺少
+`reason`/`blocker` 的“待验证/待数据”记录，先依据复测运行目录中的
+`llm_review_queue.json` 生成 `llm_reviews.json`，并把复核结果合并为
+`results.reviewed.json`：
+
+```powershell
+python tools/llm_review_results.py merge `
+  --input <run>\retest-run\retest_execution.json `
+  --queue <run>\retest-run\llm_review_queue.json `
+  --reviews <run>\retest-run\llm_reviews.json `
+  --out <run>\retest-run\results.reviewed.json
+```
+
+合并两轮结果；`--retest-results` 应指向审核后的结果。只有执行清单明确不要求
+LLM 复核时，才将其指向原始 `retest_execution.json`：
 
 ```powershell
 python tools/retest_results.py merge `
   --results <run>\results.json `
   --plan <run>\retest_queue.json `
-  --retest-results <run>\retest-run\retest_execution.json `
+  --retest-results <run>\retest-run\results.reviewed.json `
   --out <run>\results.final.json
 ```
 

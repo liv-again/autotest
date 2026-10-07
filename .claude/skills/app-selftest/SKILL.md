@@ -20,6 +20,8 @@ description: AI 驱动 Android App 用 Excel 用例做业务自测——用户�
 6. **测中 · 驱动 + 取证**：照 `references/workflow.md` 的工作流（模块级规划→页面级分组→组内复用导航→按 Excel 行号逐条驱动→行级页面/结果验证→独立截图→逐条落盘→回填）执行；下单类经 `tools/safety/submit_guard.py` 硬校验，`simulated_submit` 模式下走撤单闭环。LLM 在模块/页面组规划、组内执行决策和行级结果复核中参与，但硬页面门禁不能被 LLM 覆盖。
 7. **测后 · 结构化反哺**：结束快照+残留校验后，用 `tools/reback.py` 的 `reback_run`（按声明标识字段 upsert，写盘前 schema 校验）把本轮结果合回 `profile.yaml`/`prerequisites.yaml`（带 `last_verified`+`evidence_run`），再用 `tools/derive_docs.py` 重新派生 `画像.md`/`前置条件.md`/`速览.md`；跑 `tools/lint_profile.py` 查重复/跨产物复制/stale/漂移；`tools/metrics.py` 记本批 output/上下文税。
 
+完整任务必须显式选择 `standard`、`site_compare` 或 `navigation_probe`，并通过 `python tools/workflow.py start --mode <mode> ...` 启动；用 `workflow.py status/continue` 续跑。站点对比在新站点结果验收后必须等待用户手动切换和确认。详细阶段、命令和产物要求见 `docs/workflow_orchestration.md`。不要把一次 Runner 返回成功当成完整标准流程结束。
+
 ## 执行分工与硬约束
 
 执行前先读取 `references/execution-lessons.md`。其中的页面契约、双向入口搜索、多入口独立复位、冷启动边界和结果质量门是跨 App/Sheet/模块的通用规则；`apps/<app>/test_notes.yaml` 只能补充应用特有的页面身份证据。
@@ -34,7 +36,7 @@ description: AI 驱动 Android App 用 Excel 用例做业务自测——用户�
 - **逐条恢复**：每条完成后立即追加 `execution_records.jsonl` 并更新 `execution_state.json`；暂停后只补跑未完成行，不读取旧结果补齐当前轮次。
 - **异常集中分析**：模块完成后生成 `exception_queue.json`，只把失败/阻塞/待验证/低置信度记录交给 LLM 分析；LLM 复核不能覆盖确定性页面/动作门禁。
 - **画像反哺**：运行结束生成 `profile_feedback.json`，由 LLM 根据证据审核导航上下文和页面特征；候选必须经过 `reback_run`、schema 和 lint 后才能升级到正式画像，单次异常不得直接覆盖。
-- **复测边界**：完整执行首轮结束后默认自动对阻塞用例逐条复测一轮；兼容模式重放已校验计划，显式 `--llm-retest` 时由独立 retester 会话重新读取原始用例、画像和实时截图/UI 树，逐步决定动作。复测仍阻塞就保留最终状态，不自动无限复测。LLM 复核后的其他未通过状态可按需显式生成通用复测队列。
+- **复测边界**：单次 Runner 只完成一次执行并生成复核队列；完整 `standard` 工作流先完成首轮 LLM 逐行复核，再按策略生成复测队列并执行复测。首轮或复测的 `execution_manifest.llm_review_required` 为 true，或复测含有缺少 `reason`/`blocker` 的“待验证/待数据”记录时，必须先提交并合并复测 LLM 逐行复核；否则可直接由 `retest_results.py merge` 校验队列覆盖并合并复测事实。复核要求未满足时不得将原始复测记录作为最终结果；最后严格回填并生成报告。普通首轮不能使用 `--auto-retest-blocked` 跳过复核阶段；工作流等待 Agent/用户输入时保持未完成状态，不自动无限复测。
 
 ## 结果回填（测后必须执行）
 
@@ -74,7 +76,7 @@ python tools/profile_feedback.py --input <run>/results.reviewed.json --out <run>
 
 LLM 复核必须先判断目标页面，再判断动作效果和预期结果；确定性阻塞不能被覆盖。`llm_reviews.json` 必须绑定本次运行、当前队列、执行记录摘要和截图摘要，并记录 Agent、模型和提示词版本；不满足时不得合并。详细契约见 `tools/LLM_REVIEW_CONTRACT.md`。画像候选由执行器生成到 `profile_feedback.json`，只有审核后才允许通过 `reback_run` 反哺正式画像。
 
-完整执行默认启用 `--auto-retest-blocked`：一个 sheet 或模块的首轮结束后，执行器在当前运行目录生成 `blocked_retest_queue.json`，只把首轮 `blocked` 用例放入 `blocked-retest/` 子目录逐条复测一次，并生成 `execution_records.retested.json`。兼容模式继续使用已校验的 action plan；需要 LLM 重新理解和操作时，为复测子运行增加 `--llm-retest`，并由桌面宿主提供 `SIXGILL_AGENT_SESSION_FACTORY=module:function`。每条都会重新执行公共 setup，并写入新的页面观察和 evidence。需要查看未经复测的原始首轮时可传 `--no-auto-retest-blocked`。
+完整工作流的复测必须发生在首轮 LLM 复核之后：`workflow.py` 根据 `results.reviewed.json` 生成复测队列；非空时等待复测 Action Plan 或配置好的 LLM retester。首轮或复测清单若声明 `llm_review_required=true`，或复测输出缺少原因的“待验证/待数据”记录，工作流继续等待对 `retest/llm_review_queue.json` 的逐行复核，再做严格合并；否则直接合并复测事实。Runner 单次首轮执行不会替代这些阶段；不要用 `--auto-retest-blocked` 绕过复核门。
 
 如果 LLM 复核后还需要复测 `fail/partial/pending/other` 等状态，可显式使用通用 `retest_results.py` 流程；它默认选择所有未通过状态，排除 `pass` 和 `☑不适用`：
 
@@ -82,8 +84,10 @@ LLM 复核必须先判断目标页面，再判断动作效果和预期结果；�
 python tools/retest_results.py plan --results <run>/results.json --scope sheet --scope-name <工作表名> --out <run>/retest_queue.json
 # 逐条消费 queue.cases（只执行队列中的行，不重新跑完整 Sheet）
 python tools/_run_three_sheets.py --source <用例文件.xls> --retest-queue <run>/retest_queue.json --output <run>/retest-run
-# 执行器同时生成 retest_execution.json，直接合并复测结果
-python tools/retest_results.py merge --results <run>/results.json --plan <run>/retest_queue.json --retest-results <run>/retest-run/retest_execution.json --out <run>/results.final.json
+# 若首轮/复测清单要求 LLM 复核，或有缺少 reason/blocker 的待验证项：
+python tools/llm_review_results.py merge --input <run>/retest-run/retest_execution.json --queue <run>/retest-run/llm_review_queue.json --reviews <run>/retest-run/llm_reviews.json --out <run>/retest-run/results.reviewed.json
+python tools/retest_results.py merge --results <run>/results.json --plan <run>/retest_queue.json --retest-results <run>/retest-run/results.reviewed.json --out <run>/results.final.json
+# 若首轮和复测清单均不要求复核且待验证项已有原因，则 --retest-results 使用 retest_execution.json。
 ```
 
 合并会要求计划中的用例全部有复测结果，最终可见状态以第二轮为准，同时在每个复测用例的 `attempts` 中保留首轮和复测两份完整记录；未通过用例必须先完成这一步，再回填 Excel。然后调用：

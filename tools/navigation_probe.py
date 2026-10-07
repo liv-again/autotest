@@ -295,6 +295,8 @@ def _run_command(args: argparse.Namespace) -> int:
     ]
     if document.get("app_slug"):
         command.extend(["--app", str(document["app_slug"])])
+    if args.device:
+        command.extend(["--device", str(args.device)])
     if args.profile:
         command.extend(["--profile", str(Path(args.profile).expanduser().resolve())])
     if args.action_plan:
@@ -318,6 +320,7 @@ def main(argv: list[str] | None = None) -> int:
     _common_arguments(run_parser)
     run_parser.add_argument("--runner", required=True, help="支持 --probe/--probe-queue 的 App 执行器")
     run_parser.add_argument("--output", required=True, help="导航探测运行目录")
+    run_parser.add_argument("--device", help="ADB 设备序列号；默认使用执行器配置或当前默认设备")
     planner_group = run_parser.add_mutually_exclusive_group(required=True)
     planner_group.add_argument("--action-plan", help="当前 Agent 生成的结构化动作计划")
     planner_group.add_argument(

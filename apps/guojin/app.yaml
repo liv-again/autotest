@@ -10,3 +10,7 @@ test_accounts:
 environment: env.yaml
 profile: profile.yaml
 prerequisites: prerequisites.yaml
+module_roots:
+  Sheet1:
+    all_ids: [page_queue_nav_bar, hx_page_bottom_bar]
+    all_text: [行情]

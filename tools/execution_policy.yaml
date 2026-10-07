@@ -37,7 +37,9 @@ page_grouping:
 # time from a fresh observation, and never treats the old action plan as live
 # authority.
 retest:
-  blocked_auto_enabled: true
+  # The first-pass LLM review must determine the retest queue before any
+  # second-pass execution.  Full-run orchestration is handled by workflow.py.
+  blocked_auto_enabled: false
   max_rounds: 1
   default_mode: validated_plan_replay
   llm_mode_flag: --llm-retest

@@ -45,6 +45,12 @@
 
 执行器通过 `--app` 选择 `apps/<slug>/app.yaml`；没有 `adapter.py` 的 App 必须走 `tools.app_adapter.GenericAdapter`，不得在通用执行器中新增券商专用包名、坐标或页面判断。
 
+## 完整工作流入口
+
+完整任务必须通过 `tools/workflow.py start --mode <standard|site_compare|navigation_probe>` 启动。入口按模式编排现有工具并在每个阶段持久化状态；Agent 或用户需要补充复核、复测计划、站点切换确认或比较结果时，工作流必须停在对应的 `WAITING_*` 状态，收到输入后再用 `workflow.py continue` 推进。只有模式专属产物门禁通过且状态为 `COMPLETED` 才算整轮完成。不要只凭 Runner 返回码判断标准任务或站点对比已经完成。
+
+统一入口不替代 Runner、Site Compare Controller 或 Navigation Probe 的权威校验。站点状态转换前仍必须先查询 `site_compare_ctl.py status --json`；`workflow.py` 内部负责完成该查询。各模式具体步骤和调用方式见 `docs/workflow_orchestration.md`。
+
 ## Site Comparison Workflow
 
 When the user asks to run or continue a new/old market-site comparison:
@@ -57,6 +63,7 @@ When the user asks to run or continue a new/old market-site comparison:
 6. Do not start the old-site run until the user explicitly confirms the switch.
 7. New and Old are independent sixgill runs; never use `--resume` to turn New into Old.
 8. Do not modify the existing Runner, Retest, Gate, Review, or result schemas solely for Site Compare.
+9. After the comparison JSON passes controller validation, the workflow must generate `<source-stem>_对比结果.xlsx` in the controller-provided comparison directory using the existing Excel annotator. The workbook is a required artifact; do not report the workflow complete without it.
 
 ## 当前 Codex Agent 内联复测
 
